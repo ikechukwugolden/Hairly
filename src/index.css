@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  --color-hairly-bg: #050505;
+  --color-hairly-primary: #8B5CF6; /* Vibrant Purple from the image */
+  --color-hairly-accent: #EC4899;  /* Pink from the image */
+  --color-hairly-surface: #121212;
+  --color-hairly-muted: #A1A1AA;
+}
+
+/* Custom Curved Clip Path for the image */
+.curved-bottom {
+  clip-path: ellipse(100% 100% at 50% 0%);
+}
