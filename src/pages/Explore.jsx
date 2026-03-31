@@ -4,6 +4,27 @@ import { db, auth } from '../../firebaseconfig';
 import { collection, query, where, getDocs, orderBy, limit, doc, getDoc } from 'firebase/firestore';
 import { Link } from 'react-router-dom'; // Added for navigation
 
+function buildReviewStats(rows) {
+  const map = {};
+  rows.forEach((row) => {
+    const stylistId = row?.stylistId;
+    if (!stylistId) return;
+    const rating = Number(row?.rating);
+    if (!Number.isFinite(rating)) return;
+    if (!map[stylistId]) map[stylistId] = { sum: 0, count: 0 };
+    map[stylistId].sum += rating;
+    map[stylistId].count += 1;
+  });
+  Object.keys(map).forEach((stylistId) => {
+    const entry = map[stylistId];
+    map[stylistId] = {
+      average: entry.count > 0 ? entry.sum / entry.count : 0,
+      count: entry.count,
+    };
+  });
+  return map;
+}
+
 export default function Explore() {
   const [stylists, setStylists] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +64,28 @@ export default function Explore() {
           ...doc.data()
         }));
 
-        setStylists(fetchedStylists);
+        const reviewsSnapshot = await getDocs(collection(db, 'reviews'));
+        const reviewRows = reviewsSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        const reviewMap = buildReviewStats(reviewRows);
+
+        const withRatings = fetchedStylists.map((stylist) => {
+          const live = reviewMap[stylist.id];
+          return {
+            ...stylist,
+            rating: live ? Number(live.average.toFixed(1)) : Number(stylist.rating || 0),
+            reviewCount: live ? live.count : Number(stylist.reviewCount || 0),
+          };
+        });
+
+        if (activeFilter === "Top Rated") {
+          withRatings.sort((a, b) => {
+            const byRating = (Number(b.rating) || 0) - (Number(a.rating) || 0);
+            if (byRating !== 0) return byRating;
+            return (Number(b.reviewCount) || 0) - (Number(a.reviewCount) || 0);
+          });
+        }
+
+        setStylists(withRatings);
       } catch (error) {
         console.error("Error fetching stylists:", error);
       } finally {
@@ -135,9 +177,9 @@ export default function Explore() {
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-3">
                         <span className="bg-amber-50 text-[#FBBF24] px-2 py-0.5 rounded-md text-[10px] font-black flex items-center gap-1">
-                          <Star size={10} fill="#FBBF24" /> {s.rating || '5.0'}
+                          <Star size={10} fill="#FBBF24" /> {(Number(s.rating) || 0).toFixed(1)}
                         </span>
-                        <span className="text-zinc-300 text-[10px] font-bold">{s.followersCount || '0'} followers</span>
+                        <span className="text-zinc-300 text-[10px] font-bold">{s.reviewCount || 0} reviews</span>
                         <span className={`text-[10px] font-black ${s.acceptingBookings === false ? 'text-red-500' : 'text-emerald-600'}`}>
                           {s.acceptingBookings === false
                             ? 'Unavailable'

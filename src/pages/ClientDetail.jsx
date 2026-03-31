@@ -512,11 +512,15 @@ export default function ClientDetail() {
         createdAt: serverTimestamp(),
       });
 
-      await sendNotification({
-        type: 'rating',
-        title: 'New rating received',
-        message: `${viewerName} rated you ${ratingInput}/5${reviewInput.trim() ? ` - ${reviewInput.trim().slice(0, 90)}` : ''}.`,
-      });
+      try {
+        await sendNotification({
+          type: 'rating',
+          title: 'New rating received',
+          message: `${viewerName} rated you ${ratingInput}/5${reviewInput.trim() ? ` - ${reviewInput.trim().slice(0, 90)}` : ''}.`,
+        });
+      } catch (notifyError) {
+        console.error('Rating notification failed:', notifyError);
+      }
 
       showToast('Rating submitted successfully.', 'success');
       setReviewInput('');
@@ -588,11 +592,15 @@ export default function ClientDetail() {
         createdAt: serverTimestamp(),
       });
 
-      await sendNotification({
-        type: 'booking_request',
-        title: 'New booking request',
-        message: `${viewerName} requested "${bookingForm.service.trim()}" on ${bookingForm.date}.`,
-      });
+      try {
+        await sendNotification({
+          type: 'booking_request',
+          title: 'New booking request',
+          message: `${viewerName} requested "${bookingForm.service.trim()}" on ${bookingForm.date}.`,
+        });
+      } catch (notifyError) {
+        console.error('Booking notification failed:', notifyError);
+      }
 
       showToast('Booking request sent. Waiting for stylist confirmation.', 'success');
       setIsBookingOpen(false);

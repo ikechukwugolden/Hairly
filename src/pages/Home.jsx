@@ -73,6 +73,27 @@ function isActiveBooking(status) {
   return normalized !== 'declined' && normalized !== 'cancelled' && normalized !== 'canceled';
 }
 
+function buildReviewStats(reviews) {
+  const map = {};
+  reviews.forEach((item) => {
+    const stylistId = item?.stylistId;
+    if (!stylistId) return;
+    const rating = Number(item?.rating);
+    if (!Number.isFinite(rating)) return;
+    if (!map[stylistId]) map[stylistId] = { sum: 0, count: 0 };
+    map[stylistId].sum += rating;
+    map[stylistId].count += 1;
+  });
+  Object.keys(map).forEach((stylistId) => {
+    const entry = map[stylistId];
+    map[stylistId] = {
+      count: entry.count,
+      average: entry.count > 0 ? entry.sum / entry.count : 0,
+    };
+  });
+  return map;
+}
+
 function groupComments(comments) {
   const parentMap = new Map();
   const topLevel = [];
@@ -101,6 +122,7 @@ export default function Home() {
   const [stats, setStats] = useState({ clients: 0, revenue: 0, rating: 0 });
   const [followStats, setFollowStats] = useState({ followers: 0, following: 0 });
   const [todayBookingLoad, setTodayBookingLoad] = useState({});
+  const [reviewStatsByStylist, setReviewStatsByStylist] = useState({});
 
   const [notifications, setNotifications] = useState([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -133,13 +155,31 @@ export default function Home() {
     auth.currentUser?.displayName ||
     'Someone';
 
+  const topStylistsRanked = useMemo(() => {
+    const withLiveRatings = topStylists.map((stylist) => {
+      const live = reviewStatsByStylist[stylist.id];
+      return {
+        ...stylist,
+        rating: live ? Number(live.average.toFixed(1)) : Number(stylist.rating || 0),
+        reviewCount: live ? live.count : Number(stylist.reviewCount || 0),
+      };
+    });
+    return withLiveRatings
+      .sort((a, b) => {
+        const byRating = (Number(b.rating) || 0) - (Number(a.rating) || 0);
+        if (byRating !== 0) return byRating;
+        return (Number(b.reviewCount) || 0) - (Number(a.reviewCount) || 0);
+      })
+      .slice(0, 12);
+  }, [reviewStatsByStylist, topStylists]);
+
   const stylistLookup = useMemo(() => {
     const map = {};
-    topStylists.forEach((stylist) => {
+    topStylistsRanked.forEach((stylist) => {
       map[stylist.id] = stylist;
     });
     return map;
-  }, [topStylists]);
+  }, [topStylistsRanked]);
 
   const showToast = useCallback((message, type = 'info', duration = 2600) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -348,6 +388,7 @@ export default function Home() {
     let unsubscribeFollowers = () => {};
     let unsubscribeFollowing = () => {};
     let unsubscribeTodayBookings = () => {};
+    let unsubscribeReviews = () => {};
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       unsubscribeSharedStyles();
@@ -356,6 +397,7 @@ export default function Home() {
       unsubscribeFollowers();
       unsubscribeFollowing();
       unsubscribeTodayBookings();
+      unsubscribeReviews();
       setCurrentUserId(user?.uid || null);
 
       if (!user) {
@@ -365,6 +407,7 @@ export default function Home() {
         setSharedPortfolioStyles([]);
         setFollowStats({ followers: 0, following: 0 });
         setTodayBookingLoad({});
+        setReviewStatsByStylist({});
         navigate('/');
         return;
       }
@@ -386,7 +429,7 @@ export default function Home() {
         setStats({
           clients: uniqueClients || 0,
           revenue: totalRevenue || 0,
-          rating: profileData?.rating || 0,
+          rating: Number(profileData?.rating || 0),
         });
 
         const stylistsQuery = query(collection(db, 'users'), where('role', '==', 'stylist'));
@@ -394,12 +437,27 @@ export default function Home() {
           stylistsQuery,
           (snapshot) => {
             const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-            list.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
-            setTopStylists(list.slice(0, 12));
+            setTopStylists(list);
           },
           (error) => {
             console.error('Stylists stream error:', error);
             setTopStylists([]);
+          }
+        );
+
+        unsubscribeReviews = onSnapshot(
+          collection(db, 'reviews'),
+          (snapshot) => {
+            const rows = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+            const nextStats = buildReviewStats(rows);
+            setReviewStatsByStylist(nextStats);
+            const myLiveRating = nextStats[user.uid]?.average;
+            if (Number.isFinite(myLiveRating)) {
+              setStats((prev) => ({ ...prev, rating: Number(myLiveRating.toFixed(1)) }));
+            }
+          },
+          () => {
+            setReviewStatsByStylist({});
           }
         );
 
@@ -496,6 +554,7 @@ export default function Home() {
       unsubscribeFollowers();
       unsubscribeFollowing();
       unsubscribeTodayBookings();
+      unsubscribeReviews();
       unsubscribeAuth();
     };
   }, [navigate]);
@@ -761,13 +820,13 @@ export default function Home() {
             </button>
           </div>
 
-          {topStylists.length === 0 ? (
+          {topStylistsRanked.length === 0 ? (
             <div className="bg-zinc-50 border-2 border-dashed border-zinc-200 rounded-[28px] p-6 text-center">
               <p className="text-zinc-400 font-bold text-sm">No stylists found in the app yet.</p>
             </div>
           ) : (
             <div className="flex gap-5 overflow-x-auto pb-2 scrollbar-hide">
-              {topStylists.map((stylist) => {
+              {topStylistsRanked.map((stylist) => {
                 const dailyLimit = Math.max(1, Number(stylist.bookingLimitPerDay) || 10);
                 const bookedToday = todayBookingLoad[stylist.id] || 0;
                 const remainingToday = Math.max(dailyLimit - bookedToday, 0);
