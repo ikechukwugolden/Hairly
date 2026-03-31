@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 // eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
-import { auth, db } from '../../../firebaseconfig';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { auth, db, googleProvider, facebookProvider } from '../../../firebaseconfig';
+import { createUserWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { ChevronLeft, Check, Loader2, Apple } from 'lucide-react';
 import { FcGoogle } from 'react-icons/fc';
+import { FaFacebook } from 'react-icons/fa';
 import { BiometricScanner } from './BiometricScanner';
 
 export const ClientSignupSteps = ({ onSwitchToLogin, onFinish }) => {
@@ -22,6 +23,37 @@ export const ClientSignupSteps = ({ onSwitchToLogin, onFinish }) => {
   const interests = ["Braids", "Natural Hair", "Wigs", "Kids", "Treatments", "Extensions"];
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  const handleSocialSignUp = async (provider) => {
+    setLoading(true);
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      const userRef = doc(db, "users", user.uid);
+      const existing = await getDoc(userRef);
+
+      if (!existing.exists()) {
+        await setDoc(userRef, {
+          uid: user.uid,
+          fullName: user.displayName || '',
+          email: user.email || '',
+          role: 'client',
+          interests: [],
+          setupComplete: true,
+          createdAt: new Date().toISOString(),
+          profileImage: user.photoURL || "",
+          phoneNumber: ""
+        });
+      }
+
+      onFinish();
+    } catch (error) {
+      console.error("Social Signup Error:", error.message);
+      alert(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const toggleInterest = (item) => {
     const updated = formData.interests.includes(item)
@@ -120,8 +152,11 @@ export const ClientSignupSteps = ({ onSwitchToLogin, onFinish }) => {
       <div className="mt-10 flex flex-col items-center">
         <p className="text-zinc-400 text-[10px] font-black uppercase tracking-widest mb-6">Or sign up with</p>
         <div className="flex gap-4">
-          <button type="button" className="w-14 h-14 border border-zinc-100 rounded-full flex items-center justify-center bg-white shadow-sm hover:bg-zinc-50 transition-all">
+          <button type="button" onClick={() => handleSocialSignUp(googleProvider)} className="w-14 h-14 border border-zinc-100 rounded-full flex items-center justify-center bg-white shadow-sm hover:bg-zinc-50 transition-all">
             <FcGoogle size={24} />
+          </button>
+          <button type="button" onClick={() => handleSocialSignUp(facebookProvider)} className="w-14 h-14 border border-zinc-100 rounded-full flex items-center justify-center bg-white shadow-sm hover:bg-zinc-50 transition-all">
+            <FaFacebook size={22} className="text-[#1877F2]" />
           </button>
           <button type="button" className="w-14 h-14 bg-black rounded-full flex items-center justify-center shadow-sm">
             <Apple size={24} className="text-white" />

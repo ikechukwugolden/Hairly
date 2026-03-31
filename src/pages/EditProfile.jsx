@@ -21,8 +21,12 @@ export default function EditProfile() {
     specialties: '',
     serviceType: '',
     workingHours: '',
-    profileImage: ''
+    profileImage: '',
+    bookingLimitPerDay: 10,
+    acceptingBookings: true,
   });
+
+  const isStylist = (formData.role || 'stylist') === 'stylist';
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -60,7 +64,12 @@ export default function EditProfile() {
     setSaving(true);
     try {
       const user = auth.currentUser;
-      await updateDoc(doc(db, "users", user.uid), formData);
+      const safeDailyLimit = Math.max(1, Math.min(100, Number.parseInt(formData.bookingLimitPerDay, 10) || 10));
+      await updateDoc(doc(db, "users", user.uid), {
+        ...formData,
+        bookingLimitPerDay: safeDailyLimit,
+        acceptingBookings: formData.acceptingBookings !== false,
+      });
       setSaveSuccess(true);
       // Brief delay so user sees the "Success" state
       setTimeout(() => navigate('/profile'), 1500);
@@ -146,6 +155,31 @@ export default function EditProfile() {
               placeholder="9AM - 8PM"
             />
           </div>
+
+          {isStylist && (
+            <div className="grid grid-cols-2 gap-4">
+              <CustomInput
+                label="Bookings / Day"
+                value={formData.bookingLimitPerDay}
+                onChange={(val) => setFormData({ ...formData, bookingLimitPerDay: val })}
+                placeholder="10"
+              />
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black uppercase text-zinc-400 ml-2 tracking-tighter">Availability</label>
+                <button
+                  type="button"
+                  onClick={() => setFormData((prev) => ({ ...prev, acceptingBookings: !(prev.acceptingBookings !== false) }))}
+                  className={`w-full px-5 py-4 border rounded-2xl text-sm font-bold transition-all ${
+                    formData.acceptingBookings !== false
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                      : 'bg-red-50 border-red-200 text-red-600'
+                  }`}
+                >
+                  {formData.acceptingBookings !== false ? 'Accepting Bookings' : 'Not Accepting'}
+                </button>
+              </div>
+            </div>
+          )}
 
           <CustomInput 
             label="Shop Address" 

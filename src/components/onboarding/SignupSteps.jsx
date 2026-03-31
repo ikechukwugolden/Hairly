@@ -1,11 +1,10 @@
 import { useState, useRef } from 'react';
 // eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
-import { auth, db } from '../../../firebaseconfig'; 
+import { auth, db, googleProvider, facebookProvider } from '../../../firebaseconfig'; 
 import { 
   createUserWithEmailAndPassword, 
-  signInWithPopup, 
-  GoogleAuthProvider 
+  signInWithPopup
 } from 'firebase/auth';
 import { doc, setDoc, updateDoc, getDoc } from 'firebase/firestore';
 import { Loader2, Camera, ChevronLeft, CheckCircle2, Check, AlertCircle, X } from 'lucide-react';
@@ -43,9 +42,8 @@ export const SignupSteps = ({ onSwitchToLogin, onFinish }) => {
     setFormData({ ...formData, specialties: updated });
   };
 
-  const handleGoogleSignIn = async () => {
+  const handleSocialSignIn = async (provider, providerRole = 'stylist') => {
     setLoading(true);
-    const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
@@ -55,10 +53,16 @@ export const SignupSteps = ({ onSwitchToLogin, onFinish }) => {
         await setDoc(doc(db, "users", user.uid), {
           fullName: user.displayName || '',
           email: user.email,
-          role: 'stylist',
+          role: providerRole,
           setupComplete: false,
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          profileImage: user.photoURL || '',
         });
+        setFormData((prev) => ({
+          ...prev,
+          fullName: user.displayName || prev.fullName,
+          email: user.email || prev.email,
+        }));
         setSubStep(2);
       } else if (userDoc.data().setupComplete) {
         onFinish();
@@ -163,10 +167,10 @@ export const SignupSteps = ({ onSwitchToLogin, onFinish }) => {
             <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-2 text-zinc-400 font-bold">Or continue with</span></div>
           </div>
           <div className="flex gap-3">
-            <button onClick={handleGoogleSignIn} disabled={loading} type="button" className="flex-1 flex items-center justify-center py-3 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
+            <button onClick={() => handleSocialSignIn(googleProvider, 'stylist')} disabled={loading} type="button" className="flex-1 flex items-center justify-center py-3 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
               <FcGoogle size={24} />
             </button>
-            <button type="button" className="flex-1 flex items-center justify-center py-3 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
+            <button onClick={() => handleSocialSignIn(facebookProvider, 'stylist')} disabled={loading} type="button" className="flex-1 flex items-center justify-center py-3 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">
               <FaFacebook size={24} className="text-[#1877F2]" />
             </button>
             <button type="button" className="flex-1 flex items-center justify-center py-3 border border-zinc-200 rounded-xl hover:bg-zinc-50 transition-colors">

@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, Clock, Loader2, MapPin } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { auth, db } from '../../firebaseconfig';
 
 const startOfDay = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -61,35 +61,58 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState(today);
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUserName, setCurrentUserName] = useState('');
+  const [dailyBookingLimit, setDailyBookingLimit] = useState(10);
+  const [busyAppointmentId, setBusyAppointmentId] = useState(null);
 
   useEffect(() => {
+    let unsubscribeAppointments = () => {};
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      unsubscribeAppointments();
+      setCurrentUser(user || null);
+
       if (!user) {
         setAppointments([]);
+        setCurrentUserName('');
+        setDailyBookingLimit(10);
         setLoading(false);
         return;
       }
 
       setLoading(true);
       try {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        const profile = userDoc.exists() ? userDoc.data() : null;
+        setCurrentUserName(profile?.businessName || profile?.fullName || user.displayName || 'Stylist');
+        setDailyBookingLimit(Math.max(1, Number(profile?.bookingLimitPerDay) || 10));
+
         const appointmentsRef = collection(db, 'appointments');
         const appointmentsQuery = query(appointmentsRef, where('stylistId', '==', user.uid));
-        const snapshot = await getDocs(appointmentsQuery);
-
-        const fetchedAppointments = snapshot.docs.map((docSnapshot) => ({
-          id: docSnapshot.id,
-          ...docSnapshot.data()
-        }));
-
-        setAppointments(fetchedAppointments);
+        unsubscribeAppointments = onSnapshot(appointmentsQuery, (snapshot) => {
+          const fetchedAppointments = snapshot.docs.map((docSnapshot) => ({
+            id: docSnapshot.id,
+            ...docSnapshot.data()
+          }));
+          setAppointments(fetchedAppointments);
+          setLoading(false);
+        }, (error) => {
+          console.error('Calendar stream error:', error);
+          setLoading(false);
+        });
       } catch (error) {
         console.error('Calendar load error:', error);
-      } finally {
         setLoading(false);
+      } finally {
+        // Loading is finalized by snapshot callback.
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAppointments();
+      unsubscribe();
+    };
   }, []);
 
   const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
@@ -108,6 +131,15 @@ export default function CalendarPage() {
       });
   }, [appointments, selectedDate]);
 
+  const activeDailyBookings = useMemo(
+    () =>
+      dailyAppointments.filter((appointment) => {
+        const status = String(appointment?.status || '').toLowerCase();
+        return status !== 'declined' && status !== 'cancelled' && status !== 'canceled';
+      }).length,
+    [dailyAppointments]
+  );
+
   const monthLabel = selectedDate.toLocaleDateString('en-US', {
     month: 'long',
     year: 'numeric'
@@ -122,6 +154,41 @@ export default function CalendarPage() {
 
     setWeekStart(nextWeekStart);
     setSelectedDate(nextWeekStart);
+  };
+
+  const handleBookingStatus = async (appointment, nextStatus) => {
+    if (!currentUser?.uid || !appointment?.id || busyAppointmentId) return;
+    setBusyAppointmentId(appointment.id);
+
+    try {
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        status: nextStatus,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUser.uid,
+      });
+
+      if (appointment.customerId) {
+        const title = nextStatus === 'confirmed' ? 'Booking confirmed' : 'Booking declined';
+        const message = nextStatus === 'confirmed'
+          ? `${currentUserName} confirmed your booking for ${appointment.service || 'your service'}.`
+          : `${currentUserName} declined your booking request.`;
+
+        await addDoc(collection(db, 'notifications'), {
+          userId: appointment.customerId,
+          actorId: currentUser.uid,
+          actorName: currentUserName,
+          type: nextStatus === 'confirmed' ? 'booking_confirmed' : 'booking_denied',
+          title,
+          message,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error('Booking status update failed:', error);
+    } finally {
+      setBusyAppointmentId(null);
+    }
   };
 
   return (
@@ -179,9 +246,14 @@ export default function CalendarPage() {
       <div className="p-6">
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-bold text-zinc-800">Schedule Details</h2>
-          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
-            {dailyAppointments.length} bookings
-          </span>
+          <div className="text-right">
+            <span className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+              {dailyAppointments.length} bookings
+            </span>
+            <span className={`block text-[10px] font-black uppercase tracking-widest ${activeDailyBookings >= dailyBookingLimit ? 'text-amber-600' : 'text-emerald-600'}`}>
+              {activeDailyBookings}/{dailyBookingLimit} active
+            </span>
+          </div>
         </div>
 
         {loading ? (
@@ -217,6 +289,40 @@ export default function CalendarPage() {
                     <div className="flex items-center gap-1 text-zinc-400 text-[10px]">
                       <MapPin size={10} />
                       <span>{appointment.address || appointment.location || 'Address not provided'}</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <span
+                        className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${
+                          appointment.status === 'confirmed'
+                            ? 'bg-emerald-50 text-emerald-600'
+                            : appointment.status === 'declined'
+                              ? 'bg-red-50 text-red-600'
+                              : 'bg-amber-50 text-amber-600'
+                        }`}
+                      >
+                        {appointment.status || 'pending'}
+                      </span>
+
+                      {appointment.status !== 'confirmed' && appointment.status !== 'declined' && (
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={busyAppointmentId === appointment.id}
+                            onClick={() => handleBookingStatus(appointment, 'confirmed')}
+                            className="h-8 px-3 rounded-lg bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider disabled:opacity-60"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyAppointmentId === appointment.id}
+                            onClick={() => handleBookingStatus(appointment, 'declined')}
+                            className="h-8 px-3 rounded-lg bg-red-500 text-white text-[10px] font-black uppercase tracking-wider disabled:opacity-60"
+                          >
+                            Decline
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

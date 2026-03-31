@@ -4,7 +4,7 @@ import {
   MapPin, Phone, Folder
 } from 'lucide-react';
 import { auth, db } from '../../firebaseconfig';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 
@@ -35,6 +35,12 @@ export default function Profile() {
 
   const handleLogout = async () => {
     try {
+      if (auth.currentUser) {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          isActive: false,
+          lastActiveAt: serverTimestamp(),
+        });
+      }
       await signOut(auth);
       // App.jsx will detect this change and show the LandingHero
     } catch (error) {
@@ -69,15 +75,19 @@ export default function Profile() {
       <div className="bg-[#d8c5fb] p-8 pt-16 rounded-b-[40px] text-zinc-800">
         <div className="flex flex-col items-start gap-4">
           <div className="flex gap-4 items-center">
-            <div className="w-20 h-20 rounded-full border-4 border-white overflow-hidden shadow-lg bg-zinc-100">
+            <div className="relative w-20 h-20 rounded-full border-4 border-white overflow-hidden shadow-lg bg-zinc-100">
               <img
                 src={userData?.profileImage || `https://ui-avatars.com/api/?name=${userData?.fullName || 'User'}&background=7c3aed&color=fff`}
                 className="w-full h-full object-cover"
                 alt="Profile"
               />
+              <span className={`absolute bottom-1 right-1 block w-3 h-3 rounded-full border-2 border-white ${userData?.isActive ? 'bg-emerald-500' : 'bg-zinc-300'}`} />
             </div>
             <div>
               <h2 className="font-bold text-xl">{userData?.businessName || userData?.fullName || 'Stylist Name'}</h2>
+              <p className={`text-[10px] font-black uppercase tracking-widest ${userData?.isActive ? 'text-emerald-600' : 'text-zinc-500'}`}>
+                {userData?.isActive ? 'Active now' : 'Offline'}
+              </p>
               <p className="text-sm opacity-80 flex items-center gap-1"><MapPin size={12} /> {userData?.address || 'Location not set'}</p>
               <p className="text-sm opacity-80 flex items-center gap-1"><Phone size={12} /> {userData?.phoneNumber || 'No phone'}</p>
             </div>

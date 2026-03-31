@@ -15,6 +15,7 @@ import {
   Phone,
   UserPlus,
   Check,
+  CalendarPlus,
 } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
@@ -23,6 +24,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -73,6 +75,32 @@ function toSpecialties(value) {
   return [];
 }
 
+function toDateKey(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getAppointmentDateKey(appointment) {
+  if (!appointment) return '';
+  if (typeof appointment.date === 'string' && appointment.date) return appointment.date;
+  return (
+    toDateKey(appointment.appointmentDate) ||
+    toDateKey(appointment.scheduledAt) ||
+    toDateKey(appointment.dateTime) ||
+    ''
+  );
+}
+
+function isActiveBookingStatus(status) {
+  const normalized = String(status || '').toLowerCase();
+  return normalized !== 'declined' && normalized !== 'cancelled' && normalized !== 'canceled';
+}
+
 export default function ClientDetail() {
   const { id: stylistId } = useParams();
   const navigate = useNavigate();
@@ -87,6 +115,22 @@ export default function ClientDetail() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [followDocId, setFollowDocId] = useState(null);
   const [isTogglingFollow, setIsTogglingFollow] = useState(false);
+  const [reviews, setReviews] = useState([]);
+  const [ratingInput, setRatingInput] = useState(0);
+  const [reviewInput, setReviewInput] = useState('');
+  const [isSubmittingRating, setIsSubmittingRating] = useState(false);
+  const [isBookingOpen, setIsBookingOpen] = useState(false);
+  const [isSubmittingBooking, setIsSubmittingBooking] = useState(false);
+  const [bookingForm, setBookingForm] = useState({
+    service: '',
+    date: '',
+    time: '',
+    location: '',
+    note: '',
+  });
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [isSendingChat, setIsSendingChat] = useState(false);
 
   const [selectedStyle, setSelectedStyle] = useState(null);
   const [likes, setLikes] = useState([]);
@@ -113,11 +157,25 @@ export default function ClientDetail() {
     'Stylist';
 
   const specialties = useMemo(() => toSpecialties(stylist?.specialties), [stylist]);
+  const isStylistActive = stylist?.isActive === true;
+  const stylistDailyLimit = Math.max(1, Number(stylist?.bookingLimitPerDay) || 10);
+  const isStylistAcceptingBookings = stylist?.acceptingBookings !== false;
 
   const viewerLiked = useMemo(
     () => Boolean(viewer?.uid && likes.some((like) => like.id === viewer.uid)),
     [likes, viewer]
   );
+
+  const averageRating = useMemo(() => {
+    if (reviews.length === 0) return Number(stylist?.rating || 0);
+    const sum = reviews.reduce((total, item) => total + (Number(item.rating) || 0), 0);
+    return sum / reviews.length;
+  }, [reviews, stylist]);
+
+  const chatId = useMemo(() => {
+    if (!viewer?.uid || !stylistId) return null;
+    return [viewer.uid, stylistId].sort().join('_');
+  }, [viewer?.uid, stylistId]);
 
   const showToast = (message, type = 'info', duration = 2600) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -251,6 +309,50 @@ export default function ClientDetail() {
       unsubMyFollow();
     };
   }, [stylistId, viewer?.uid]);
+
+  useEffect(() => {
+    if (!stylistId) return undefined;
+
+    const reviewsQuery = query(collection(db, 'reviews'), where('stylistId', '==', stylistId));
+    const unsubscribe = onSnapshot(
+      reviewsQuery,
+      (snapshot) => {
+        const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        list.sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+        setReviews(list);
+      },
+      () => {
+        setReviews([]);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [stylistId]);
+
+  useEffect(() => {
+    if (!chatId) {
+      setChatMessages([]);
+      return undefined;
+    }
+
+    const messagesQuery = query(
+      collection(db, 'chats', chatId, 'messages'),
+      orderBy('createdAt', 'asc')
+    );
+
+    const unsubscribe = onSnapshot(
+      messagesQuery,
+      (snapshot) => {
+        const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        setChatMessages(list);
+      },
+      () => {
+        setChatMessages([]);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [chatId]);
 
   useEffect(() => {
     if (!selectedStyle?.id) {
@@ -390,6 +492,171 @@ export default function ClientDetail() {
     }
   };
 
+  const handleSubmitRating = async (e) => {
+    e.preventDefault();
+    if (!viewer || !stylistId || viewer.uid === stylistId || isSubmittingRating) return;
+    if (ratingInput < 1 || ratingInput > 5) {
+      showToast('Please choose a star rating.', 'warning');
+      return;
+    }
+
+    setIsSubmittingRating(true);
+    try {
+      await setDoc(doc(db, 'reviews', `${stylistId}_${viewer.uid}`), {
+        stylistId,
+        reviewerId: viewer.uid,
+        reviewerName: viewerName,
+        reviewerImage: viewerProfile?.profileImage || viewer.photoURL || '',
+        rating: Number(ratingInput),
+        comment: reviewInput.trim(),
+        createdAt: serverTimestamp(),
+      });
+
+      await sendNotification({
+        type: 'rating',
+        title: 'New rating received',
+        message: `${viewerName} rated you ${ratingInput}/5${reviewInput.trim() ? ` - ${reviewInput.trim().slice(0, 90)}` : ''}.`,
+      });
+
+      showToast('Rating submitted successfully.', 'success');
+      setReviewInput('');
+    } catch (error) {
+      console.error('Rating failed:', error);
+      const raw = String(error?.code || error?.message || '').toLowerCase();
+      showToast(
+        /permission-denied/.test(raw)
+          ? 'Rating blocked by Firestore rules. Please update/deploy rules.'
+          : 'Could not submit rating right now.',
+        'error'
+      );
+    } finally {
+      setIsSubmittingRating(false);
+    }
+  };
+
+  const handleSubmitBooking = async (e) => {
+    e.preventDefault();
+    if (!viewer || !stylistId || isSubmittingBooking) return;
+    if (!bookingForm.service.trim() || !bookingForm.date) {
+      showToast('Service and date are required to book.', 'warning');
+      return;
+    }
+    if (!isStylistAcceptingBookings) {
+      showToast('This stylist is not accepting bookings right now.', 'warning');
+      return;
+    }
+
+    setIsSubmittingBooking(true);
+    try {
+      const existingAppointmentsQuery = query(
+        collection(db, 'appointments'),
+        where('stylistId', '==', stylistId)
+      );
+      const existingAppointmentsSnapshot = await getDocs(existingAppointmentsQuery);
+      const existingBookingsForDate = existingAppointmentsSnapshot.docs.reduce((total, docSnap) => {
+        const data = docSnap.data();
+        if (!isActiveBookingStatus(data?.status)) return total;
+        const existingDateKey = getAppointmentDateKey(data);
+        return existingDateKey === bookingForm.date ? total + 1 : total;
+      }, 0);
+
+      if (existingBookingsForDate >= stylistDailyLimit) {
+        showToast(
+          `${stylistName} is fully booked on ${bookingForm.date}. Please choose another date.`,
+          'warning'
+        );
+        return;
+      }
+
+      const isoDateTime = bookingForm.time
+        ? new Date(`${bookingForm.date}T${bookingForm.time}`).toISOString()
+        : new Date(`${bookingForm.date}T09:00`).toISOString();
+
+      await addDoc(collection(db, 'appointments'), {
+        stylistId,
+        customerId: viewer.uid,
+        customerName: viewerName,
+        customerEmail: viewer.email || '',
+        clientName: viewerName,
+        service: bookingForm.service.trim(),
+        date: bookingForm.date,
+        time: bookingForm.time || '09:00',
+        appointmentDate: isoDateTime,
+        location: bookingForm.location.trim() || stylist?.address || stylist?.location || '',
+        note: bookingForm.note.trim(),
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      });
+
+      await sendNotification({
+        type: 'booking_request',
+        title: 'New booking request',
+        message: `${viewerName} requested "${bookingForm.service.trim()}" on ${bookingForm.date}.`,
+      });
+
+      showToast('Booking request sent. Waiting for stylist confirmation.', 'success');
+      setIsBookingOpen(false);
+      setBookingForm({
+        service: '',
+        date: '',
+        time: '',
+        location: '',
+        note: '',
+      });
+    } catch (error) {
+      console.error('Booking request failed:', error);
+      const raw = String(error?.code || error?.message || '').toLowerCase();
+      showToast(
+        /permission-denied/.test(raw)
+          ? 'Booking blocked by Firestore rules. Please update/deploy rules.'
+          : 'Could not send booking request right now.',
+        'error'
+      );
+    } finally {
+      setIsSubmittingBooking(false);
+    }
+  };
+
+  const handleSendChat = async (e) => {
+    e.preventDefault();
+    const text = chatInput.trim();
+    if (!text || !viewer || !chatId || isSendingChat) return;
+
+    setIsSendingChat(true);
+    try {
+      await setDoc(
+        doc(db, 'chats', chatId),
+        {
+          members: [viewer.uid, stylistId],
+          updatedAt: serverTimestamp(),
+          lastMessage: text.slice(0, 180),
+          lastMessageAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        senderId: viewer.uid,
+        senderName: viewerName,
+        text,
+        createdAt: serverTimestamp(),
+      });
+
+      await sendNotification({
+        type: 'chat',
+        title: 'New chat message',
+        message: `${viewerName}: ${text.slice(0, 100)}`,
+      });
+
+      setChatInput('');
+    } catch (error) {
+      console.error('Chat message failed:', error);
+      showToast('Could not send message right now.', 'error');
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
   const whatsappNumber = normalizePhone(stylist?.phoneNumber);
   const whatsappLink = whatsappNumber ? `https://wa.me/${whatsappNumber}` : '';
 
@@ -422,7 +689,7 @@ export default function ClientDetail() {
               <div className="p-5 sm:p-6 pt-0">
                 <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 -mt-10">
                   <div className="flex items-end gap-4">
-                    <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-3xl border-4 border-white overflow-hidden bg-zinc-100 shadow-lg">
+                    <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-3xl border-4 border-white overflow-hidden bg-zinc-100 shadow-lg">
                       <img
                         src={
                           stylist.profileImage ||
@@ -431,20 +698,32 @@ export default function ClientDetail() {
                         alt={stylistName}
                         className="w-full h-full object-cover"
                       />
+                      <span className={`absolute bottom-1 right-1 block w-3 h-3 rounded-full border-2 border-white ${isStylistActive ? 'bg-emerald-500' : 'bg-zinc-300'}`} />
                     </div>
                     <div className="pb-1">
                       <h2 className="text-xl sm:text-2xl font-black leading-tight">{stylistName}</h2>
                       <p className="text-xs font-bold uppercase tracking-wider text-zinc-500 mt-1">
                         {stylist.serviceType || 'Professional Stylist'}
                       </p>
+                      <p className={`text-[10px] font-black uppercase tracking-wider mt-1 ${isStylistActive ? 'text-emerald-600' : 'text-zinc-400'}`}>
+                        {isStylistActive ? 'Active now' : 'Offline'}
+                      </p>
                     </div>
                   </div>
 
-                  <div className="flex gap-2 sm:pb-1">
+	                  <div className="flex gap-2 sm:pb-1">
                     <button
                       type="button"
-                      onClick={handleToggleFollow}
-                      disabled={!viewer || isTogglingFollow || viewer?.uid === stylistId}
+                      onClick={() => setIsBookingOpen(true)}
+                      disabled={!viewer || viewer?.uid === stylistId || !isStylistAcceptingBookings}
+                      className="h-11 px-4 rounded-xl text-sm font-black inline-flex items-center gap-2 bg-emerald-500 text-white disabled:opacity-60"
+                    >
+                      <CalendarPlus size={16} /> {isStylistAcceptingBookings ? 'Book' : 'Unavailable'}
+                    </button>
+	                    <button
+	                      type="button"
+	                      onClick={handleToggleFollow}
+	                      disabled={!viewer || isTogglingFollow || viewer?.uid === stylistId}
                       className={`h-11 px-4 rounded-xl text-sm font-black inline-flex items-center gap-2 disabled:opacity-60 ${
                         isFollowing ? 'bg-violet-100 text-violet-700' : 'bg-[#7c3aed] text-white'
                       }`}
@@ -474,7 +753,7 @@ export default function ClientDetail() {
                   {stylist.bio || 'No bio added yet.'}
                 </p>
 
-                <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
+	                <div className="mt-5 grid grid-cols-3 gap-2 sm:gap-3">
                   <div className="rounded-2xl bg-zinc-50 border border-zinc-100 p-3 text-center">
                     <p className="text-lg font-black text-zinc-900">{styles.length}</p>
                     <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Posts</p>
@@ -483,16 +762,96 @@ export default function ClientDetail() {
                     <p className="text-lg font-black text-zinc-900">{followersCount}</p>
                     <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Followers</p>
                   </div>
-                  <div className="rounded-2xl bg-zinc-50 border border-zinc-100 p-3 text-center">
-                    <p className="text-lg font-black text-zinc-900">{Number(stylist.rating || 0).toFixed(1)}</p>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Rating</p>
+	                  <div className="rounded-2xl bg-zinc-50 border border-zinc-100 p-3 text-center">
+	                    <p className="text-lg font-black text-zinc-900">{averageRating.toFixed(1)}</p>
+	                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Rating</p>
+	                  </div>
+	                </div>
+	              </div>
+	            </section>
+
+            <section className="bg-white rounded-3xl border border-zinc-100 p-5 sm:p-6 shadow-sm">
+              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-4">Rate Stylist</h3>
+
+              {viewer?.uid === stylistId ? (
+                <p className="text-sm font-semibold text-zinc-500">You cannot rate your own profile.</p>
+              ) : (
+                <form onSubmit={handleSubmitRating} className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => setRatingInput(star)}
+                        className="p-1 rounded-full"
+                      >
+                        <Star
+                          size={20}
+                          className={star <= ratingInput ? 'text-amber-500 fill-amber-500' : 'text-zinc-300'}
+                        />
+                      </button>
+                    ))}
+                    <span className="text-sm font-bold text-zinc-500 ml-1">
+                      {ratingInput > 0 ? `${ratingInput}/5` : 'Select rating'}
+                    </span>
                   </div>
+
+                  <textarea
+                    value={reviewInput}
+                    onChange={(e) => setReviewInput(e.target.value)}
+                    placeholder="Write a short review (optional)..."
+                    maxLength={500}
+                    className="w-full p-3 rounded-2xl border border-zinc-200 bg-zinc-50 text-sm font-semibold outline-none"
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingRating || ratingInput === 0}
+                    className="h-11 px-5 rounded-xl bg-[#7c3aed] text-white text-sm font-black disabled:opacity-60"
+                  >
+                    {isSubmittingRating ? 'Submitting...' : 'Submit Rating'}
+                  </button>
+                </form>
+              )}
+
+              <div className="mt-5 pt-4 border-t border-zinc-100">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] uppercase font-black tracking-widest text-zinc-400">Recent Reviews</p>
+                  <p className="text-xs font-bold text-zinc-500">{reviews.length} total</p>
                 </div>
+
+                {reviews.length === 0 ? (
+                  <p className="text-sm font-semibold text-zinc-400">No ratings yet.</p>
+                ) : (
+                  <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                    {reviews.slice(0, 6).map((review) => (
+                      <div key={review.id} className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-black text-zinc-700">{review.reviewerName || 'Client'}</p>
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: 5 }).map((_, index) => (
+                              <Star
+                                key={`${review.id}-${index}`}
+                                size={12}
+                                className={index < Number(review.rating || 0) ? 'text-amber-500 fill-amber-500' : 'text-zinc-300'}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        {review.comment ? (
+                          <p className="text-sm text-zinc-600 font-medium mt-1 break-words">{review.comment}</p>
+                        ) : (
+                          <p className="text-sm text-zinc-400 font-medium mt-1">No written comment.</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </section>
 
-            <section className="bg-white rounded-3xl border border-zinc-100 p-5 sm:p-6 shadow-sm">
-              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-4">About</h3>
+	            <section className="bg-white rounded-3xl border border-zinc-100 p-5 sm:p-6 shadow-sm">
+	              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-4">About</h3>
               <div className="grid sm:grid-cols-2 gap-3">
                 <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
                   <p className="text-[10px] uppercase font-black tracking-widest text-zinc-400">Location</p>
@@ -518,6 +877,16 @@ export default function ClientDetail() {
                     <Clock3 size={14} /> {stylist.workingHours || 'Not set'}
                   </p>
                 </div>
+                <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+                  <p className="text-[10px] uppercase font-black tracking-widest text-zinc-400">Daily Booking Limit</p>
+                  <p className="mt-1 text-sm font-bold text-zinc-700">{stylistDailyLimit} bookings/day</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-100 bg-zinc-50 p-3">
+                  <p className="text-[10px] uppercase font-black tracking-widest text-zinc-400">Availability</p>
+                  <p className={`mt-1 text-sm font-bold ${isStylistAcceptingBookings ? 'text-emerald-600' : 'text-red-500'}`}>
+                    {isStylistAcceptingBookings ? 'Accepting bookings' : 'Not accepting bookings'}
+                  </p>
+                </div>
               </div>
 
               {specialties.length > 0 && (
@@ -531,11 +900,54 @@ export default function ClientDetail() {
                     ))}
                   </div>
                 </div>
+	              )}
+	            </section>
+
+            <section className="bg-white rounded-3xl border border-zinc-100 p-5 sm:p-6 shadow-sm">
+              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-4">In-App Chat</h3>
+
+              {!viewer ? (
+                <p className="text-sm font-semibold text-zinc-500">Login to chat with this stylist.</p>
+              ) : (
+                <>
+                  <div className="max-h-56 overflow-y-auto rounded-2xl border border-zinc-100 bg-zinc-50 p-3 space-y-2">
+                    {chatMessages.length === 0 ? (
+                      <p className="text-sm text-zinc-400 font-semibold">No messages yet. Say hello.</p>
+                    ) : (
+                      chatMessages.slice(-80).map((msg) => {
+                        const mine = msg.senderId === viewer.uid;
+                        return (
+                          <div key={msg.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[80%] rounded-2xl px-3 py-2 ${mine ? 'bg-[#7c3aed] text-white' : 'bg-white border border-zinc-100 text-zinc-700'}`}>
+                              <p className="text-[11px] font-bold break-words">{msg.text}</p>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <form onSubmit={handleSendChat} className="mt-3 flex gap-2">
+                    <input
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder={`Message ${stylistName}...`}
+                      className="flex-1 bg-zinc-100 rounded-xl px-4 py-3 text-sm font-semibold outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isSendingChat || !chatInput.trim()}
+                      className="h-12 w-12 rounded-xl bg-[#7c3aed] text-white inline-flex items-center justify-center disabled:opacity-60"
+                    >
+                      {isSendingChat ? <Loader2 size={16} className="animate-spin" /> : <SendHorizontal size={16} />}
+                    </button>
+                  </form>
+                </>
               )}
             </section>
 
-            <section className="bg-white rounded-3xl border border-zinc-100 p-5 sm:p-6 shadow-sm">
-              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-4">Portfolio</h3>
+	            <section className="bg-white rounded-3xl border border-zinc-100 p-5 sm:p-6 shadow-sm">
+	              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-400 mb-4">Portfolio</h3>
 
               {styles.length === 0 ? (
                 <div className="py-14 text-center text-zinc-500">
@@ -565,9 +977,75 @@ export default function ClientDetail() {
             </section>
           </>
         )}
-      </div>
+	      </div>
 
-      {selectedStyle && (
+      {isBookingOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 p-4 flex items-center justify-center">
+          <div className="w-full max-w-lg bg-white rounded-3xl border border-zinc-100 shadow-2xl">
+            <div className="p-4 border-b border-zinc-100 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest font-black text-zinc-400">Book Stylist</p>
+                <h3 className="font-black text-sm text-zinc-800">{stylistName}</h3>
+                <p className="text-[10px] font-bold text-zinc-500 mt-1">
+                  {isStylistAcceptingBookings
+                    ? `${stylistDailyLimit} bookings allowed per day`
+                    : 'This stylist is not accepting bookings right now'}
+                </p>
+              </div>
+              <button type="button" onClick={() => setIsBookingOpen(false)} className="p-2 rounded-full hover:bg-zinc-100">
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitBooking} className="p-4 space-y-3">
+              <input
+                value={bookingForm.service}
+                onChange={(e) => setBookingForm((prev) => ({ ...prev, service: e.target.value }))}
+                placeholder="Service (e.g. Knotless Braids)"
+                className="w-full bg-zinc-100 rounded-xl px-4 py-3 text-sm font-semibold outline-none"
+                required
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  value={bookingForm.date}
+                  onChange={(e) => setBookingForm((prev) => ({ ...prev, date: e.target.value }))}
+                  className="w-full bg-zinc-100 rounded-xl px-4 py-3 text-sm font-semibold outline-none"
+                  required
+                />
+                <input
+                  type="time"
+                  value={bookingForm.time}
+                  onChange={(e) => setBookingForm((prev) => ({ ...prev, time: e.target.value }))}
+                  className="w-full bg-zinc-100 rounded-xl px-4 py-3 text-sm font-semibold outline-none"
+                />
+              </div>
+              <input
+                value={bookingForm.location}
+                onChange={(e) => setBookingForm((prev) => ({ ...prev, location: e.target.value }))}
+                placeholder="Preferred location (optional)"
+                className="w-full bg-zinc-100 rounded-xl px-4 py-3 text-sm font-semibold outline-none"
+              />
+              <textarea
+                value={bookingForm.note}
+                onChange={(e) => setBookingForm((prev) => ({ ...prev, note: e.target.value }))}
+                placeholder="Additional note (optional)"
+                maxLength={500}
+                className="w-full bg-zinc-100 rounded-xl px-4 py-3 text-sm font-semibold outline-none resize-none h-24"
+              />
+              <button
+                type="submit"
+                disabled={isSubmittingBooking || !isStylistAcceptingBookings}
+                className="w-full h-11 rounded-xl bg-emerald-500 text-white text-sm font-black disabled:opacity-60"
+              >
+                {isSubmittingBooking ? 'Sending Request...' : 'Send Booking Request'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+	      {selectedStyle && (
         <div className="fixed inset-0 z-50 bg-black/70 p-3 md:p-8 flex items-center justify-center">
           <div className="w-full max-w-4xl bg-white rounded-3xl overflow-hidden grid md:grid-cols-2 max-h-[95vh]">
             <div className="bg-black flex items-center justify-center">

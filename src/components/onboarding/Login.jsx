@@ -1,12 +1,13 @@
 import { useState } from 'react';
 // eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
-import { auth, googleProvider, facebookProvider } from '../../../firebaseconfig';
+import { auth, db, googleProvider, facebookProvider } from '../../../firebaseconfig';
 import { 
   signInWithEmailAndPassword, 
   signInWithPopup, 
   sendPasswordResetEmail // Added for real functionality
 } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { ChevronLeft, Eye, EyeOff, Loader2, CheckCircle2, AlertCircle, X, Mail } from 'lucide-react';
 import { FcGoogle } from 'react-icons/fc';
 import { FaFacebook, FaApple } from 'react-icons/fa';
@@ -34,7 +35,7 @@ const Toast = ({ message, onClose }) => (
   </motion.div>
 );
 
-export const Login = ({ onSwitchToSignup, onLoginSuccess }) => {
+export const Login = ({ onSwitchToSignup, onLoginSuccess, preferredRole = 'client' }) => {
   const [view, setView] = useState('login'); 
 
   return (
@@ -43,6 +44,7 @@ export const Login = ({ onSwitchToSignup, onLoginSuccess }) => {
         {view === 'login' ? (
           <LoginForm
             key="login"
+            preferredRole={preferredRole}
             onForgotPassword={() => setView('forgot')}
             onSwitchToSignup={onSwitchToSignup}
             onLoginSuccess={onLoginSuccess}
@@ -56,7 +58,7 @@ export const Login = ({ onSwitchToSignup, onLoginSuccess }) => {
 }
 
 // --- LOGIN FORM COMPONENT ---
-const LoginForm = ({ onForgotPassword, onSwitchToSignup, onLoginSuccess }) => {
+const LoginForm = ({ onForgotPassword, onSwitchToSignup, onLoginSuccess, preferredRole }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -72,7 +74,7 @@ const LoginForm = ({ onForgotPassword, onSwitchToSignup, onLoginSuccess }) => {
     setError(null);
 
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, email.trim(), password);
       onLoginSuccess();
     } catch (err) {
       const errorMap = {
@@ -89,12 +91,39 @@ const LoginForm = ({ onForgotPassword, onSwitchToSignup, onLoginSuccess }) => {
   };
 
   const handleSocial = async (provider) => {
+    setLoading(true);
+    setError(null);
     try {
-      await signInWithPopup(auth, provider);
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      const userRef = doc(db, 'users', user.uid);
+      const userSnap = await getDoc(userRef);
+
+      if (!userSnap.exists()) {
+        const role = preferredRole === 'stylist' ? 'stylist' : 'client';
+        await setDoc(userRef, {
+          uid: user.uid,
+          fullName: user.displayName || '',
+          email: user.email || '',
+          role,
+          setupComplete: role === 'client',
+          createdAt: new Date().toISOString(),
+          profileImage: user.photoURL || '',
+        }, { merge: true });
+      }
+
       onLoginSuccess();
-    } catch {
-      setError("Social login failed. Please try again.");
+    } catch (err) {
+      const raw = String(err?.code || err?.message || '').toLowerCase();
+      const message = /operation-not-allowed/.test(raw)
+        ? 'Enable this provider in Firebase Authentication first.'
+        : /popup-closed-by-user/.test(raw)
+          ? 'Sign-in popup was closed before completion.'
+          : 'Social login failed. Please try again.';
+      setError(message);
       setTimeout(() => setError(null), 3000);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -188,10 +217,16 @@ const ForgotPassword = ({ onBackToLogin }) => {
     setError(null);
 
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(auth, email.trim());
       setSent(true);
-    } catch {
-      setError("We couldn't find an account with that email.");
+    } catch (err) {
+      const raw = String(err?.code || err?.message || '').toLowerCase();
+      const message = /user-not-found|invalid-email/.test(raw)
+        ? "We couldn't find an account with that email."
+        : /too-many-requests/.test(raw)
+          ? 'Too many attempts. Please try again later.'
+          : 'Could not send reset email right now.';
+      setError(message);
     } finally {
       setLoading(false);
     }

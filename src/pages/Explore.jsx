@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, SlidersHorizontal, MapPin, Star, Loader2, Users } from 'lucide-react';
 import { db, auth } from '../../firebaseconfig';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, doc, getDoc } from 'firebase/firestore';
 import { Link } from 'react-router-dom'; // Added for navigation
 
 export default function Explore() {
@@ -18,9 +18,9 @@ export default function Explore() {
       setLoading(true);
       try {
         if (!userLocation && auth.currentUser) {
-          const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", auth.currentUser.uid)));
-          if (!userDoc.empty) {
-            setUserLocation(userDoc.docs[0].data().location);
+          const userDoc = await getDoc(doc(db, "users", auth.currentUser.uid));
+          if (userDoc.exists()) {
+            setUserLocation(userDoc.data().location || "");
           }
         }
 
@@ -121,9 +121,9 @@ export default function Explore() {
                     <div className="flex justify-between items-start">
                       <h3 className="font-bold text-sm text-zinc-800 line-clamp-1">{s.businessName || s.fullName}</h3>
                       <div className="flex items-center gap-1">
-                        <div className={`w-1.5 h-1.5 rounded-full ${s.status === 'Closed' ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                        <span className={`text-[9px] font-black uppercase ${s.status === 'Closed' ? 'text-red-500' : 'text-green-500'}`}>
-                          {s.status || 'Open'}
+                        <div className={`w-1.5 h-1.5 rounded-full ${s.isActive ? 'bg-emerald-500' : 'bg-zinc-300'}`}></div>
+                        <span className={`text-[9px] font-black uppercase ${s.isActive ? 'text-emerald-600' : 'text-zinc-400'}`}>
+                          {s.isActive ? 'Active' : 'Offline'}
                         </span>
                       </div>
                     </div>
@@ -138,6 +138,11 @@ export default function Explore() {
                           <Star size={10} fill="#FBBF24" /> {s.rating || '5.0'}
                         </span>
                         <span className="text-zinc-300 text-[10px] font-bold">{s.followersCount || '0'} followers</span>
+                        <span className={`text-[10px] font-black ${s.acceptingBookings === false ? 'text-red-500' : 'text-emerald-600'}`}>
+                          {s.acceptingBookings === false
+                            ? 'Unavailable'
+                            : `${Math.max(1, Number(s.bookingLimitPerDay) || 10)}/day`}
+                        </span>
                       </div>
                       <div className="bg-[#7c3aed]/10 text-[#7c3aed] text-[9px] font-black px-3 py-1.5 rounded-xl uppercase group-hover:bg-[#7c3aed] group-hover:text-white transition-colors">
                         View Profile

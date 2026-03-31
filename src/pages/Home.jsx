@@ -59,6 +59,20 @@ function formatRelativeTime(value) {
   return new Date(ms).toLocaleDateString();
 }
 
+function toLocalDateKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isActiveBooking(status) {
+  const normalized = String(status || '').toLowerCase();
+  return normalized !== 'declined' && normalized !== 'cancelled' && normalized !== 'canceled';
+}
+
 function groupComments(comments) {
   const parentMap = new Map();
   const topLevel = [];
@@ -86,6 +100,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ clients: 0, revenue: 0, rating: 0 });
   const [followStats, setFollowStats] = useState({ followers: 0, following: 0 });
+  const [todayBookingLoad, setTodayBookingLoad] = useState({});
 
   const [notifications, setNotifications] = useState([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -332,6 +347,7 @@ export default function Home() {
     let unsubscribeStylists = () => {};
     let unsubscribeFollowers = () => {};
     let unsubscribeFollowing = () => {};
+    let unsubscribeTodayBookings = () => {};
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       unsubscribeSharedStyles();
@@ -339,6 +355,7 @@ export default function Home() {
       unsubscribeStylists();
       unsubscribeFollowers();
       unsubscribeFollowing();
+      unsubscribeTodayBookings();
       setCurrentUserId(user?.uid || null);
 
       if (!user) {
@@ -347,6 +364,7 @@ export default function Home() {
         setTopStylists([]);
         setSharedPortfolioStyles([]);
         setFollowStats({ followers: 0, following: 0 });
+        setTodayBookingLoad({});
         navigate('/');
         return;
       }
@@ -445,6 +463,25 @@ export default function Home() {
             setFollowStats((prev) => ({ ...prev, following: 0 }));
           }
         );
+
+        const todayKey = toLocalDateKey(new Date());
+        const todayBookingsQuery = query(collection(db, 'appointments'), where('date', '==', todayKey));
+        unsubscribeTodayBookings = onSnapshot(
+          todayBookingsQuery,
+          (snapshot) => {
+            const map = {};
+            snapshot.docs.forEach((docSnap) => {
+              const data = docSnap.data();
+              const stylistId = data?.stylistId;
+              if (!stylistId || !isActiveBooking(data?.status)) return;
+              map[stylistId] = (map[stylistId] || 0) + 1;
+            });
+            setTodayBookingLoad(map);
+          },
+          () => {
+            setTodayBookingLoad({});
+          }
+        );
       } catch (error) {
         console.error('Home load error:', error);
       } finally {
@@ -458,6 +495,7 @@ export default function Home() {
       unsubscribeStylists();
       unsubscribeFollowers();
       unsubscribeFollowing();
+      unsubscribeTodayBookings();
       unsubscribeAuth();
     };
   }, [navigate]);
@@ -729,18 +767,43 @@ export default function Home() {
             </div>
           ) : (
             <div className="flex gap-5 overflow-x-auto pb-2 scrollbar-hide">
-              {topStylists.map((stylist) => (
-                <button key={stylist.id} type="button" onClick={() => navigate(`/explore/${stylist.id}`)} className="flex-shrink-0 flex flex-col items-center gap-2">
-                  <div className="w-16 h-16 rounded-full border-2 border-[#7c3aed] p-0.5">
+              {topStylists.map((stylist) => {
+                const dailyLimit = Math.max(1, Number(stylist.bookingLimitPerDay) || 10);
+                const bookedToday = todayBookingLoad[stylist.id] || 0;
+                const remainingToday = Math.max(dailyLimit - bookedToday, 0);
+                const isActive = stylist.isActive === true;
+                const isAccepting = stylist.acceptingBookings !== false;
+                const availabilityLabel = !isAccepting
+                  ? 'Unavailable'
+                  : remainingToday > 0
+                    ? `${remainingToday} slots left`
+                    : 'Fully booked';
+
+                return (
+                <button key={stylist.id} type="button" onClick={() => navigate(`/explore/${stylist.id}`)} className="flex-shrink-0 flex flex-col items-center gap-1.5">
+                  <div className="relative w-16 h-16 rounded-full border-2 border-[#7c3aed] p-0.5">
                     <img
                       src={stylist.profileImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(stylist.businessName || stylist.fullName || 'Stylist')}&background=f4f4f5&color=7c3aed`}
                       className="w-full h-full rounded-full object-cover"
                       alt={stylist.businessName || stylist.fullName || 'Stylist'}
                     />
+                    <span className={`absolute bottom-0 right-0 block w-3 h-3 rounded-full border-2 border-white ${isActive ? 'bg-emerald-500' : 'bg-zinc-300'}`} />
                   </div>
                   <span className="text-[9px] font-bold text-zinc-500 max-w-16 truncate">{stylist.businessName || stylist.fullName || 'Stylist'}</span>
+                  <span
+                    className={`text-[8px] font-black uppercase tracking-wider ${
+                      !isAccepting
+                        ? 'text-red-500'
+                        : remainingToday > 0
+                          ? 'text-emerald-600'
+                          : 'text-amber-600'
+                    }`}
+                  >
+                    {availabilityLabel}
+                  </span>
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
