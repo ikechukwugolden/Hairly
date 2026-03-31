@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+// eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, db } from '../../../firebaseconfig'; 
 import { 
@@ -107,7 +108,11 @@ export const SignupSteps = ({ onSwitchToLogin, onFinish }) => {
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("No user logged in");
-      const { password, confirmPassword, ...profileData } = formData;
+      const profileData = {
+        ...formData,
+      };
+      delete profileData.password;
+      delete profileData.confirmPassword;
 
       await updateDoc(doc(db, "users", user.uid), {
         ...profileData,

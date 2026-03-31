@@ -1,20 +1,22 @@
 import { useState } from 'react';
+// eslint-disable-next-line no-unused-vars
+import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight } from 'lucide-react';
 
 const onboardingData = [
   {
-    title: "Get Discovered Online",
-    desc: "Upload your portfolio and let new clients discover your skills even if they don't know your shop.",
-    img: "/stylist1.png", // Replace with your image paths
+    title: "Revolutionize Your Style",
+    desc: "Discover top-tier stylists or showcase your unique craft to the world.",
+    img: "/stylist1.png", 
   },
   {
-    title: "Reduce Style Mistakes",
-    desc: "Help Clients See Their Style Before You Start with AI preview to align expectations",
+    title: "Visualise the Result",
+    desc: "Use AI previews to see hair styles before the first cut, ensuring perfect alignment.",
     img: "/stylist2.png",
   },
   {
-    title: "Manage Your Business Digitally",
-    desc: "Keep client records, view insights, and grow your business with simple digital tools.",
+    title: "Seamless Bookings",
+    desc: "Manage appointments or find the perfect time slot with simple digital tools.",
     img: "/stylist3.png",
   }
 ];
@@ -32,23 +34,38 @@ export const OnboardingFlow = ({ onFinish }) => {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-[#0f071e]">
-      {/* The Curved Image Area */}
+    <div className="h-screen flex flex-col bg-[#0f071e] text-white">
+      {/* The Curved Image Area with Smooth Transitions */}
       <div className="relative h-[60vh] overflow-hidden">
-        <div 
-          className="absolute inset-0 z-0" 
-          style={{ clipPath: 'ellipse(100% 100% at 50% 0%)' }}
-        >
-          <img src={current.img} className="w-full h-full object-cover" alt="onboarding" />
-        </div>
+        <AnimatePresence mode="wait">
+          <motion.div 
+            key={index}
+            initial={{ opacity: 0, scale: 1.1 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6 }}
+            className="absolute inset-0 z-0" 
+            style={{ clipPath: 'ellipse(100% 100% at 50% 0%)' }}
+          >
+            <img src={current.img} className="w-full h-full object-cover" alt="onboarding" />
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {/* The Content Area */}
       <div className="flex-1 px-10 pt-10 pb-12 flex flex-col justify-between -mt-20 relative z-10 bg-gradient-to-b from-transparent via-[#2e1065] to-[#1a0f2e]">
-        <div className="space-y-4">
-          <h2 className="text-3xl font-black">{current.title}</h2>
-          <p className="text-white/70 leading-relaxed text-lg">{current.desc}</p>
-        </div>
+        <AnimatePresence mode="wait">
+          <motion.div 
+            key={index}
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -20, opacity: 0 }}
+            className="space-y-4"
+          >
+            <h2 className="text-3xl font-black italic tracking-tighter">{current.title}</h2>
+            <p className="text-white/70 leading-relaxed text-lg">{current.desc}</p>
+          </motion.div>
+        </AnimatePresence>
 
         <div className="flex items-center justify-between">
           {/* Progress Dots */}
@@ -64,7 +81,7 @@ export const OnboardingFlow = ({ onFinish }) => {
           {/* Next Button */}
           <button 
             onClick={handleNext}
-            className="p-4 bg-white/10 border border-white/20 rounded-full hover:bg-white/20"
+            className="p-4 bg-white/10 border border-white/20 rounded-full hover:bg-white/20 active:scale-90 transition-all"
           >
             <ChevronRight size={28} />
           </button>

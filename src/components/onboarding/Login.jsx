@@ -1,4 +1,5 @@
 import { useState } from 'react';
+// eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, googleProvider, facebookProvider } from '../../../firebaseconfig';
 import { 
@@ -33,7 +34,7 @@ const Toast = ({ message, onClose }) => (
   </motion.div>
 );
 
-export const Login = ({ onForgotPassword, onSwitchToSignup, onLoginSuccess }) => {
+export const Login = ({ onSwitchToSignup, onLoginSuccess }) => {
   const [view, setView] = useState('login'); 
 
   return (
@@ -91,7 +92,7 @@ const LoginForm = ({ onForgotPassword, onSwitchToSignup, onLoginSuccess }) => {
     try {
       await signInWithPopup(auth, provider);
       onLoginSuccess();
-    } catch (err) {
+    } catch {
       setError("Social login failed. Please try again.");
       setTimeout(() => setError(null), 3000);
     }
@@ -189,7 +190,7 @@ const ForgotPassword = ({ onBackToLogin }) => {
     try {
       await sendPasswordResetEmail(auth, email);
       setSent(true);
-    } catch (err) {
+    } catch {
       setError("We couldn't find an account with that email.");
     } finally {
       setLoading(false);

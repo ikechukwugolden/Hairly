@@ -14,50 +14,88 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing base64Image or promptText' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const env = globalThis.process?.env || {};
+  const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) {
     console.error('GEMINI_API_KEY not set in environment');
     return res.status(500).json({ error: 'API key not configured on server' });
   }
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: promptText },
-              { inline_data: { mime_type: mimeType, data: base64Image } }
+  const modelSet = new Set([
+    env.GEMINI_MODEL,
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash'
+  ].filter(Boolean));
+
+  let lastError = 'Unable to get response from any configured Gemini model.';
+
+  const tryModel = async (model) => {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: promptText },
+                { inline_data: { mime_type: mimeType, data: base64Image } }
+              ]
+            }],
+            safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
             ]
-          }],
-          safetySettings: [
-            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-          ]
-        })
+          })
+        }
+      );
+
+      const data = await response.json();
+      if (data.error) {
+        const message = data.error.message || 'Unknown Gemini error.';
+        const isModelMismatch = /not found|not supported|unsupported|for API version/i.test(message);
+        if (isModelMismatch) {
+          lastError = message;
+          return null;
+        }
+        console.error('Gemini API error:', data.error);
+        return res.status(400).json({ error: message });
       }
-    );
 
-    const data = await response.json();
-
-    if (data.error) {
-      console.error('Gemini API error:', data.error);
-      return res.status(400).json({ error: data.error.message });
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return res.status(200).json({ text });
+      lastError = 'No response text returned by AI model.';
+    } catch (error) {
+      console.error('Serverless function error:', error);
+      lastError = 'Server error processing image';
     }
+    return null;
+  };
 
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) {
-      return res.status(400).json({ error: 'No response from AI model' });
-    }
-
-    return res.status(200).json({ text });
-  } catch (error) {
-    console.error('Serverless function error:', error);
-    return res.status(500).json({ error: 'Server error processing image' });
+  for (const model of modelSet) {
+    const result = await tryModel(model);
+    if (result) return result;
   }
+
+  try {
+    const modelsResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const modelsData = await modelsResponse.json();
+    const list = Array.isArray(modelsData.models) ? modelsData.models : [];
+    const candidates = list.filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'));
+    const preferred = candidates.find(m => /flash/i.test(m.name || '')) || candidates[0];
+    const discovered = preferred?.name?.replace(/^models\//, '');
+    if (discovered && !modelSet.has(discovered)) {
+      const result = await tryModel(discovered);
+      if (result) return result;
+    }
+  } catch (error) {
+    console.error('Model discovery error:', error);
+  }
+
+  return res.status(400).json({ error: lastError });
 }

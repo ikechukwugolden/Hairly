@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, SlidersHorizontal, MapPin, Star, Loader2, Users } from 'lucide-react';
 import { db, auth } from '../../firebaseconfig';
 import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { Link } from 'react-router-dom'; // Added for navigation
 
 export default function Explore() {
   const [stylists, setStylists] = useState([]);
@@ -16,7 +17,6 @@ export default function Explore() {
     const fetchStylists = async () => {
       setLoading(true);
       try {
-        // 1. Get current user's location for the "Near me" filter
         if (!userLocation && auth.currentUser) {
           const userDoc = await getDocs(query(collection(db, "users"), where("uid", "==", auth.currentUser.uid)));
           if (!userDoc.empty) {
@@ -27,7 +27,6 @@ export default function Explore() {
         let q;
         const usersRef = collection(db, "users");
 
-        // 2. Build Automatic Query based on Active Filter
         if (activeFilter === "Near me" && userLocation) {
           q = query(usersRef, where("role", "==", "stylist"), where("location", "==", userLocation));
         } else if (activeFilter === "Top Rated") {
@@ -35,7 +34,6 @@ export default function Explore() {
         } else if (activeFilter === "Home Service") {
           q = query(usersRef, where("role", "==", "stylist"), where("serviceType", "==", "Home Service"));
         } else {
-          // Default: Fetch all stylists
           q = query(usersRef, where("role", "==", "stylist"), limit(20));
         }
 
@@ -56,14 +54,12 @@ export default function Explore() {
     fetchStylists();
   }, [activeFilter, userLocation]);
 
-  // Local Search Filtering
   const displayedStylists = stylists.filter(s => 
     (s.businessName || s.fullName || "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
     <div className="min-h-screen bg-white pb-24">
-      {/* Header & Filters */}
       <div className="bg-[#7c3aed] p-6 pt-12 rounded-b-[40px] shadow-lg">
         <div className="flex items-center gap-2 bg-white rounded-2xl px-4 py-3 shadow-inner">
           <Search size={18} className="text-zinc-400" />
@@ -94,7 +90,6 @@ export default function Explore() {
         </div>
       </div>
 
-      {/* Stylist List */}
       <div className="p-6">
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-black text-zinc-800 text-lg uppercase tracking-tight">
@@ -111,43 +106,46 @@ export default function Explore() {
         ) : (
           <div className="space-y-4">
             {displayedStylists.length > 0 ? displayedStylists.map((s) => (
-              <div key={s.id} className="flex gap-4 p-4 rounded-[28px] border border-zinc-50 shadow-sm bg-white hover:border-[#7c3aed]/20 transition-all active:scale-[0.98]">
-                <div className="w-16 h-16 bg-zinc-100 rounded-full overflow-hidden border-2 border-zinc-50 flex-shrink-0">
-                  <img 
-                    src={s.profileImage || `https://ui-avatars.com/api/?name=${s.businessName || s.fullName}&background=random`} 
-                    alt="stylist" 
-                    className="w-full h-full object-cover" 
-                  />
-                </div>
-                
-                <div className="flex-1">
-                  <div className="flex justify-between items-start">
-                    <h3 className="font-bold text-sm text-zinc-800 line-clamp-1">{s.businessName || s.fullName}</h3>
-                    <div className="flex items-center gap-1">
-                      <div className={`w-1.5 h-1.5 rounded-full ${s.status === 'Closed' ? 'bg-red-500' : 'bg-green-500'}`}></div>
-                      <span className={`text-[9px] font-black uppercase ${s.status === 'Closed' ? 'text-red-500' : 'text-green-500'}`}>
-                        {s.status || 'Open'}
-                      </span>
-                    </div>
+              /* WRAPPED IN LINK: Navigates to the unique profile page */
+              <Link to={`/explore/${s.id}`} key={s.id} className="block group">
+                <div className="flex gap-4 p-4 rounded-[28px] border border-zinc-50 shadow-sm bg-white group-hover:border-[#7c3aed]/20 transition-all group-active:scale-[0.98]">
+                  <div className="w-16 h-16 bg-zinc-100 rounded-full overflow-hidden border-2 border-zinc-50 flex-shrink-0">
+                    <img 
+                      src={s.profileImage || `https://ui-avatars.com/api/?name=${s.businessName || s.fullName}&background=random`} 
+                      alt="stylist" 
+                      className="w-full h-full object-cover" 
+                    />
                   </div>
                   
-                  <p className="text-zinc-400 text-[10px] flex items-center gap-1 mt-1 font-medium">
-                    <MapPin size={10} className="text-[#7c3aed]" /> {s.location || s.address || "Location Hidden"}
-                  </p>
-                  
-                  <div className="flex items-center justify-between mt-3">
-                    <div className="flex items-center gap-3">
-                      <span className="bg-amber-50 text-[#FBBF24] px-2 py-0.5 rounded-md text-[10px] font-black flex items-center gap-1">
-                        <Star size={10} fill="#FBBF24" /> {s.rating || '5.0'}
-                      </span>
-                      <span className="text-zinc-300 text-[10px] font-bold">{s.followersCount || '0'} followers</span>
+                  <div className="flex-1">
+                    <div className="flex justify-between items-start">
+                      <h3 className="font-bold text-sm text-zinc-800 line-clamp-1">{s.businessName || s.fullName}</h3>
+                      <div className="flex items-center gap-1">
+                        <div className={`w-1.5 h-1.5 rounded-full ${s.status === 'Closed' ? 'bg-red-500' : 'bg-green-500'}`}></div>
+                        <span className={`text-[9px] font-black uppercase ${s.status === 'Closed' ? 'text-red-500' : 'text-green-500'}`}>
+                          {s.status || 'Open'}
+                        </span>
+                      </div>
                     </div>
-                    <button className="bg-[#7c3aed]/10 text-[#7c3aed] text-[9px] font-black px-3 py-1.5 rounded-xl uppercase hover:bg-[#7c3aed] hover:text-white transition-colors">
-                      Book Now
-                    </button>
+                    
+                    <p className="text-zinc-400 text-[10px] flex items-center gap-1 mt-1 font-medium">
+                      <MapPin size={10} className="text-[#7c3aed]" /> {s.location || s.address || "Location Hidden"}
+                    </p>
+                    
+                    <div className="flex items-center justify-between mt-3">
+                      <div className="flex items-center gap-3">
+                        <span className="bg-amber-50 text-[#FBBF24] px-2 py-0.5 rounded-md text-[10px] font-black flex items-center gap-1">
+                          <Star size={10} fill="#FBBF24" /> {s.rating || '5.0'}
+                        </span>
+                        <span className="text-zinc-300 text-[10px] font-bold">{s.followersCount || '0'} followers</span>
+                      </div>
+                      <div className="bg-[#7c3aed]/10 text-[#7c3aed] text-[9px] font-black px-3 py-1.5 rounded-xl uppercase group-hover:bg-[#7c3aed] group-hover:text-white transition-colors">
+                        View Profile
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Link>
             )) : (
               <div className="text-center py-20 flex flex-col items-center grayscale opacity-50">
                 <Users size={48} className="text-zinc-200 mb-4" />

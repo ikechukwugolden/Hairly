@@ -1,0 +1,130 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- HELPER FUNCTIONS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isStyleOwnerFromRequest() {
+      return isSignedIn() && (
+        request.resource.data.ownerId == request.auth.uid ||
+        request.resource.data.stylistId == request.auth.uid
+      );
+    }
+
+    function isStyleOwnerFromResource() {
+      return isSignedIn() && (
+        resource.data.ownerId == request.auth.uid ||
+        resource.data.stylistId == request.auth.uid
+      );
+    }
+
+    // --- COLLECTION RULES ---
+
+    // 1. User Profiles: Prevent role-tampering
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn()
+                    && request.auth.uid == uid
+                    && request.resource.data.role == resource.data.role;
+    }
+
+    // 2. AI Style Studio: Sessions & Vision History
+    match /ai_sessions/{sessionId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 3. Styles Portfolio
+    match /styles/{styleId} {
+      allow read: if true;
+      allow create: if isStyleOwnerFromRequest();
+      allow update, delete: if isStyleOwnerFromResource();
+
+      // Likes subcollection: one like doc per signed-in user at likes/{uid}
+      match /likes/{likeUserId} {
+        allow read: if true;
+        allow create, update, delete: if isSignedIn() && request.auth.uid == likeUserId;
+      }
+
+      // Comments subcollection (supports replies via parentId)
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isSignedIn()
+                      && request.resource.data.userId == request.auth.uid
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() > 0
+                      && request.resource.data.text.size() <= 500;
+        allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      }
+    }
+
+    // 4. Appointments & Bookings (Synced logic)
+    match /appointments/{appointmentId} {
+      allow create: if isSignedIn()
+                    && (request.resource.data.customerId == request.auth.uid
+                        || request.resource.data.stylistId == request.auth.uid);
+
+      allow read, update, delete: if isSignedIn()
+                    && (resource.data.customerId == request.auth.uid
+                        || resource.data.stylistId == request.auth.uid);
+    }
+
+    match /bookings/{bookingId} {
+      allow create: if isSignedIn()
+                    && (request.resource.data.customerId == request.auth.uid
+                        || request.resource.data.stylistId == request.auth.uid);
+
+      allow read, update, delete: if isSignedIn()
+                    && (resource.data.customerId == request.auth.uid
+                        || resource.data.stylistId == request.auth.uid);
+    }
+
+    // 5. Attendance & Business Logs
+    match /attendance_logs/{logId} {
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 6. Community Feed / Broadcasts
+    match /broadcast_posts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+    }
+
+    // 7. Follows
+    match /follows/{followId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+                    && request.resource.data.followerId == request.auth.uid
+                    && request.resource.data.stylistId is string;
+      allow update, delete: if isSignedIn() && resource.data.followerId == request.auth.uid;
+    }
+
+    // 8. Notifications
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && (
+        request.resource.data.userId == request.auth.uid
+        ||
+        (
+          request.resource.data.userId is string
+          && request.resource.data.actorId == request.auth.uid
+          && request.resource.data.type is string
+          && request.resource.data.title is string
+          && request.resource.data.message is string
+          && request.resource.data.read == false
+          && request.resource.data.title.size() > 0
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.message.size() > 0
+          && request.resource.data.message.size() <= 500
+        )
+      );
+      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+  }
+}

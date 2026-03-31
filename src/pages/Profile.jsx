@@ -43,9 +43,10 @@ export default function Profile() {
   };
 
   const menu = [
-    { icon: <Edit3 size={18} />, label: "Edit Profile", path: "/edit-profile" }, // Fixed path to match App.jsx
+    { icon: <Edit3 size={18} />, label: "Edit Profile", path: "/edit-profile" },
     { icon: <MessageSquare size={18} />, label: "Reviews", path: "/reviews" },
     { icon: <Bell size={18} />, label: "Notifications", path: "/notifications" },
+    { icon: <Folder size={18} />, label: "Upload New Style", path: "/upload" },
     { icon: <Folder size={18} />, label: "My Styles", path: "/portfolio" },
     { icon: <Settings size={18} />, label: "Settings", path: "/settings" },
     {
