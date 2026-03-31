@@ -199,7 +199,7 @@ export default function ClientDetail() {
     setStyles(merged);
   };
 
-  const sendNotification = async ({ type, title, message, postId = null }) => {
+  const sendNotification = async ({ type, title, message, postId = null, extra = {} }) => {
     const actor = auth.currentUser;
     if (!actor || !stylistId || actor.uid === stylistId) return;
 
@@ -208,12 +208,14 @@ export default function ClientDetail() {
         userId: stylistId,
         actorId: actor.uid,
         actorName: viewerName,
+        actorImage: viewerProfile?.profileImage || viewer?.photoURL || '',
         type,
         title,
         message,
         postId,
         read: false,
         createdAt: serverTimestamp(),
+        ...extra,
       });
     } catch (error) {
       console.error('Notification create failed:', error);
@@ -576,12 +578,14 @@ export default function ClientDetail() {
         ? new Date(`${bookingForm.date}T${bookingForm.time}`).toISOString()
         : new Date(`${bookingForm.date}T09:00`).toISOString();
 
-      await addDoc(collection(db, 'appointments'), {
+      const appointmentRef = await addDoc(collection(db, 'appointments'), {
         stylistId,
         customerId: viewer.uid,
         customerName: viewerName,
         customerEmail: viewer.email || '',
+        customerImage: viewerProfile?.profileImage || viewer.photoURL || '',
         clientName: viewerName,
+        clientImage: viewerProfile?.profileImage || viewer.photoURL || '',
         service: bookingForm.service.trim(),
         date: bookingForm.date,
         time: bookingForm.time || '09:00',
@@ -589,6 +593,7 @@ export default function ClientDetail() {
         location: bookingForm.location.trim() || stylist?.address || stylist?.location || '',
         note: bookingForm.note.trim(),
         status: 'pending',
+        createdBy: viewer.uid,
         createdAt: serverTimestamp(),
       });
 
@@ -597,6 +602,15 @@ export default function ClientDetail() {
           type: 'booking_request',
           title: 'New booking request',
           message: `${viewerName} requested "${bookingForm.service.trim()}" on ${bookingForm.date}.`,
+          extra: {
+            appointmentId: appointmentRef.id,
+            customerId: viewer.uid,
+            customerName: viewerName,
+            customerImage: viewerProfile?.profileImage || viewer.photoURL || '',
+            service: bookingForm.service.trim(),
+            date: bookingForm.date,
+            time: bookingForm.time || '09:00',
+          },
         });
       } catch (notifyError) {
         console.error('Booking notification failed:', notifyError);

@@ -679,7 +679,7 @@ export default function Home() {
       </AnimatePresence>
 
       <div className="bg-[#7c3aed] p-6 pt-12 pb-16 rounded-b-[40px] relative">
-        <div className="max-w-6xl mx-auto flex items-center justify-between relative z-10">
+        <div className="max-w-6xl mx-auto flex items-center justify-between relative z-50">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-2xl border-2 border-white/30 overflow-hidden bg-white/10 shadow-inner">
               <img
@@ -718,7 +718,7 @@ export default function Home() {
                   initial={{ opacity: 0, y: -12, scale: 0.98 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -10, scale: 0.98 }}
-                  className="absolute right-0 top-14 w-[min(24rem,calc(100vw-2rem))] rounded-3xl bg-white text-zinc-900 shadow-2xl border border-zinc-100 p-4 z-30"
+                  className="absolute right-0 top-14 w-[min(24rem,calc(100vw-2rem))] rounded-3xl bg-white text-zinc-900 shadow-2xl border border-zinc-100 p-4 z-[120]"
                 >
                   <div className="flex items-center justify-between mb-3">
                     <div>
@@ -994,10 +994,17 @@ export default function Home() {
                   upcomingAppointments.map((apt) => (
                     <div key={apt.id} className="bg-white p-4 rounded-[28px] border border-zinc-100 flex items-center gap-4 shadow-sm">
                       <div className="w-12 h-12 rounded-2xl bg-zinc-50 overflow-hidden">
-                        <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(apt.clientName || 'Client')}&background=f4f4f5&color=7c3aed`} alt="client" />
+                        <img
+                          src={
+                            apt.clientImage ||
+                            apt.customerImage ||
+                            `https://ui-avatars.com/api/?name=${encodeURIComponent(apt.clientName || apt.customerName || 'Client')}&background=f4f4f5&color=7c3aed`
+                          }
+                          alt="client"
+                        />
                       </div>
                       <div className="flex-1">
-                        <h4 className="font-bold text-zinc-800 text-sm">{apt.clientName}</h4>
+                        <h4 className="font-bold text-zinc-800 text-sm">{apt.clientName || apt.customerName || 'Client'}</h4>
                         <p className="text-[10px] text-zinc-400 font-bold flex items-center gap-1">
                           <Calendar size={10} /> {apt.time}
                         </p>

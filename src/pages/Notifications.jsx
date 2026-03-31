@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, CalendarCheck2, Check, Clock3, Loader2, Sparkles, Wallet } from 'lucide-react';
+import { Bell, CalendarCheck2, Check, CheckCircle2, Clock3, Loader2, Sparkles, Wallet, XCircle } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import { auth, db } from '../../firebaseconfig';
 
 function toMillis(value) {
@@ -27,6 +38,9 @@ function formatRelativeTime(value) {
 
 const typeToIcon = {
   booking: CalendarCheck2,
+  booking_request: CalendarCheck2,
+  booking_confirmed: CheckCircle2,
+  booking_denied: XCircle,
   payment: Wallet,
   reminder: Clock3,
   insight: Sparkles,
@@ -35,17 +49,34 @@ const typeToIcon = {
 export default function Notifications() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [busyActionId, setBusyActionId] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUserName, setCurrentUserName] = useState('');
+  const [currentUserImage, setCurrentUserImage] = useState('');
 
   useEffect(() => {
     let unsubscribeSnapshot = () => {};
 
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       unsubscribeSnapshot();
+      setCurrentUser(user || null);
 
       if (!user) {
         setItems([]);
+        setCurrentUserName('');
+        setCurrentUserImage('');
         setLoading(false);
         return;
+      }
+
+      try {
+        const profileDoc = await getDoc(doc(db, 'users', user.uid));
+        const profile = profileDoc.exists() ? profileDoc.data() : null;
+        setCurrentUserName(profile?.businessName || profile?.fullName || user.displayName || 'Stylist');
+        setCurrentUserImage(profile?.profileImage || user.photoURL || '');
+      } catch {
+        setCurrentUserName(user.displayName || 'Stylist');
+        setCurrentUserImage(user.photoURL || '');
       }
 
       const notificationsQuery = query(
@@ -111,6 +142,88 @@ export default function Notifications() {
     }
   };
 
+  const resolvePendingAppointment = async (item) => {
+    if (item.appointmentId) {
+      const byId = await getDoc(doc(db, 'appointments', item.appointmentId));
+      if (byId.exists()) return { id: byId.id, ...byId.data() };
+    }
+
+    if (!currentUser?.uid) return null;
+
+    const snapshot = await getDocs(
+      query(collection(db, 'appointments'), where('stylistId', '==', currentUser.uid))
+    );
+
+    const pending = snapshot.docs
+      .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+      .filter((appointment) => String(appointment.status || 'pending').toLowerCase() === 'pending');
+
+    const matched = pending.find((appointment) =>
+      (item.actorId && appointment.customerId === item.actorId)
+      || (item.customerId && appointment.customerId === item.customerId)
+      || ((item.actorName || item.customerName) && (appointment.customerName || appointment.clientName) === (item.actorName || item.customerName))
+    );
+
+    if (matched) return matched;
+
+    const sorted = pending.sort((a, b) => (toMillis(b.createdAt) - toMillis(a.createdAt)));
+    return sorted[0] || null;
+  };
+
+  const handleBookingAction = async (item, nextStatus) => {
+    if (!currentUser?.uid || busyActionId) return;
+    setBusyActionId(item.id);
+
+    try {
+      const appointment = await resolvePendingAppointment(item);
+      if (!appointment?.id) {
+        await updateDoc(doc(db, 'notifications', item.id), {
+          read: true,
+          actionTaken: true,
+          actionStatus: 'not_found',
+          actionAt: serverTimestamp(),
+        });
+        return;
+      }
+
+      await updateDoc(doc(db, 'appointments', appointment.id), {
+        status: nextStatus,
+        updatedBy: currentUser.uid,
+        updatedAt: serverTimestamp(),
+      });
+
+      await updateDoc(doc(db, 'notifications', item.id), {
+        read: true,
+        actionTaken: true,
+        actionStatus: nextStatus,
+        actionAt: serverTimestamp(),
+        appointmentId: appointment.id,
+      });
+
+      const targetCustomerId = appointment.customerId || item.customerId || item.actorId;
+      if (targetCustomerId) {
+        await addDoc(collection(db, 'notifications'), {
+          userId: targetCustomerId,
+          actorId: currentUser.uid,
+          actorName: currentUserName,
+          actorImage: currentUserImage,
+          type: nextStatus === 'confirmed' ? 'booking_confirmed' : 'booking_denied',
+          title: nextStatus === 'confirmed' ? 'Booking confirmed' : 'Booking declined',
+          message: nextStatus === 'confirmed'
+            ? `${currentUserName} confirmed your booking for ${appointment.service || 'your service'}.`
+            : `${currentUserName} declined your booking request.`,
+          appointmentId: appointment.id,
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+    } catch (error) {
+      console.error('Failed to process booking action from notifications:', error);
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#fcfcfc] pb-24">
       <div className="bg-[#7c3aed] p-6 pt-12 rounded-b-[40px] text-white shadow-lg">
@@ -153,23 +266,26 @@ export default function Notifications() {
           <div className="mt-4 space-y-3">
             {items.map((item) => {
               const Icon = typeToIcon[item.type] || Bell;
+              const actorName = item.actorName || item.customerName || 'User';
+              const actorImage = item.actorImage || item.customerImage || '';
+              const canResolveBooking = item.type === 'booking_request' && item.actionTaken !== true;
+
               return (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  onClick={() => toggleRead(item)}
                   className={`w-full text-left rounded-3xl p-4 border transition-all ${
                     item.read === true ? 'bg-white border-zinc-100' : 'bg-violet-50/60 border-violet-200'
                   }`}
                 >
                   <div className="flex items-start gap-4">
-                    <div
-                      className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
-                        item.read === true ? 'bg-zinc-100 text-zinc-500' : 'bg-[#7c3aed] text-white'
-                      }`}
-                    >
-                      <Icon size={18} />
+                    <div className="relative w-11 h-11 rounded-2xl overflow-hidden bg-zinc-100 flex items-center justify-center">
+                      {actorImage ? (
+                        <img src={actorImage} alt={actorName} className="w-full h-full object-cover" />
+                      ) : (
+                        <Icon size={18} className="text-zinc-500" />
+                      )}
                     </div>
+
                     <div className="flex-1">
                       <div className="flex justify-between gap-3">
                         <h2 className="font-black text-sm text-zinc-800">{item.title || 'Notification'}</h2>
@@ -177,20 +293,53 @@ export default function Notifications() {
                           {formatRelativeTime(item.createdAt || item.timestamp)}
                         </span>
                       </div>
+
+                      <p className="text-[11px] text-zinc-500 mt-1 font-bold">{actorName}</p>
                       <p className="text-sm text-zinc-600 mt-1">{item.message || 'You have a new update.'}</p>
+
+                      {canResolveBooking && (
+                        <div className="mt-3 flex gap-2">
+                          <button
+                            type="button"
+                            disabled={busyActionId === item.id}
+                            onClick={() => handleBookingAction(item, 'confirmed')}
+                            className="h-8 px-3 rounded-lg bg-emerald-500 text-white text-[10px] font-black uppercase tracking-wider disabled:opacity-60"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyActionId === item.id}
+                            onClick={() => handleBookingAction(item, 'declined')}
+                            className="h-8 px-3 rounded-lg bg-red-500 text-white text-[10px] font-black uppercase tracking-wider disabled:opacity-60"
+                          >
+                            Deny
+                          </button>
+                        </div>
+                      )}
+
+                      {item.actionTaken === true && (
+                        <p className="mt-3 text-[11px] font-black uppercase tracking-widest text-zinc-400">
+                          {item.actionStatus === 'confirmed'
+                            ? 'Booking confirmed'
+                            : item.actionStatus === 'declined'
+                              ? 'Booking denied'
+                              : 'Action completed'}
+                        </p>
+                      )}
+
                       <div className="mt-3 text-[11px] font-bold uppercase tracking-widest">
-                        {item.read === true ? (
-                          <span className="inline-flex items-center gap-1 text-zinc-400">
-                            <Check size={12} />
-                            Read
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[#7c3aed]">Tap to mark as read</span>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleRead(item)}
+                          className={item.read === true ? 'text-zinc-400' : 'text-[#7c3aed]'}
+                        >
+                          {item.read === true ? 'Mark unread' : 'Mark as read'}
+                        </button>
                       </div>
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

@@ -63,6 +63,7 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
   const [currentUserName, setCurrentUserName] = useState('');
+  const [currentUserImage, setCurrentUserImage] = useState('');
   const [dailyBookingLimit, setDailyBookingLimit] = useState(10);
   const [busyAppointmentId, setBusyAppointmentId] = useState(null);
 
@@ -76,6 +77,7 @@ export default function CalendarPage() {
       if (!user) {
         setAppointments([]);
         setCurrentUserName('');
+        setCurrentUserImage('');
         setDailyBookingLimit(10);
         setLoading(false);
         return;
@@ -86,6 +88,7 @@ export default function CalendarPage() {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         const profile = userDoc.exists() ? userDoc.data() : null;
         setCurrentUserName(profile?.businessName || profile?.fullName || user.displayName || 'Stylist');
+        setCurrentUserImage(profile?.profileImage || user.photoURL || '');
         setDailyBookingLimit(Math.max(1, Number(profile?.bookingLimitPerDay) || 10));
 
         const appointmentsRef = collection(db, 'appointments');
@@ -177,6 +180,11 @@ export default function CalendarPage() {
           userId: appointment.customerId,
           actorId: currentUser.uid,
           actorName: currentUserName,
+          actorImage: currentUserImage || '',
+          appointmentId: appointment.id,
+          service: appointment.service || '',
+          date: appointment.date || '',
+          time: appointment.time || '',
           type: nextStatus === 'confirmed' ? 'booking_confirmed' : 'booking_denied',
           title,
           message,

@@ -119,7 +119,10 @@ service cloud.firestore {
       // Keep create open for any signed-in user to avoid booking flow breaks
       allow create: if isSignedIn();
 
-      allow read, update, delete: if isSignedIn() && (
+      // Needed for client-side availability checks (count existing bookings by stylist/date)
+      allow read: if isSignedIn();
+
+      allow update, delete: if isSignedIn() && (
         resourceIncludesBookingParticipant()
         || resource.data.createdBy == request.auth.uid
       );
@@ -129,7 +132,9 @@ service cloud.firestore {
       // Keep create open for any signed-in user to avoid booking flow breaks
       allow create: if isSignedIn();
 
-      allow read, update, delete: if isSignedIn() && (
+      allow read: if isSignedIn();
+
+      allow update, delete: if isSignedIn() && (
         resourceIncludesBookingParticipant()
         || resource.data.createdBy == request.auth.uid
       );
