@@ -1,7 +1,7 @@
 import { useState } from 'react';
 // eslint-disable-next-line no-unused-vars
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 import heroImage from '../../assets/image2.png';
 import oneImage from '../../assets/image4.png';
@@ -25,9 +25,17 @@ const slides = [
   }
 ];
 
-export const OnboardingFlow = ({ onComplete }) => {
+export const OnboardingFlow = ({ onComplete, onBack }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const data = slides[currentIndex];
+
+  const handleBack = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    } else if (onBack) {
+      onBack();
+    }
+  };
 
   const handleNext = () => {
     if (currentIndex < slides.length - 1) {
@@ -69,6 +77,15 @@ export const OnboardingFlow = ({ onComplete }) => {
           {/* CONTENT SECTION */}
           <div className="flex-1 px-8 md:px-16 pt-12 md:pt-0 pb-20 md:pb-0 bg-gradient-to-b from-transparent via-[#2e1065] to-[#1a0f2e] md:bg-none -mt-16 md:mt-0 relative z-10 flex flex-col justify-center">
             <div className="max-w-md mx-auto md:mx-0">
+              <button
+                type="button"
+                onClick={handleBack}
+                className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-white/70 transition-colors hover:text-white"
+              >
+                <ChevronLeft size={18} />
+                Back
+              </button>
+
               <div className="space-y-4 md:space-y-6 mb-12">
                 <motion.h2 
                   initial={{ opacity: 0, y: 10 }}

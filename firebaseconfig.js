@@ -25,5 +25,6 @@ export const storage = getStorage(app);
 // Initialize Social Providers
 export const googleProvider = new GoogleAuthProvider();
 export const facebookProvider = new FacebookAuthProvider();
+//make a mac export
 
 export default app;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, NavLink } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -49,9 +49,40 @@ export default function App() {
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(window.navigator.onLine);
-  const [step, setStep] = useState('landing');
+  const [step, setStep] = useState('LandingHero');
   const [selectedRole, setSelectedRole] = useState('stylist');
   const [userRole, setUserRole] = useState('stylist');
+  const selectedRoleRef = useRef('stylist');
+
+  useEffect(() => {
+    selectedRoleRef.current = selectedRole;
+  }, [selectedRole]);
+
+  const persistSelectedRole = useCallback((role) => {
+    setSelectedRole(role);
+    selectedRoleRef.current = role;
+    try {
+      window.sessionStorage.setItem('hairly_selected_role', role);
+    } catch {
+      // Ignore storage errors in restricted browsers.
+    }
+  }, []);
+
+  const readPersistedRole = useCallback(() => {
+    try {
+      return window.sessionStorage.getItem('hairly_selected_role');
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const clearPersistedRole = useCallback(() => {
+    try {
+      window.sessionStorage.removeItem('hairly_selected_role');
+    } catch {
+      // Ignore storage errors in restricted browsers.
+    }
+  }, []);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -91,13 +122,20 @@ export default function App() {
         try {
           const userDoc = await getDoc(doc(db, "users", user.uid));
           const data = userDoc.exists() ? userDoc.data() : null;
-          const role = data?.role || 'stylist';
+          const role =
+            data?.role ||
+            readPersistedRole() ||
+            selectedRoleRef.current ||
+            'stylist';
+
           setUserRole(role);
-          setSelectedRole(role);
+          persistSelectedRole(role);
 
           if (data?.setupComplete === true) {
             setIsSetupComplete(true);
+            clearPersistedRole();
           } else {
+            setIsSetupComplete(false);
             setStep('signup');
           }
         } catch (error) {
@@ -107,8 +145,8 @@ export default function App() {
       } else {
         setIsSetupComplete(false);
         setUserRole('stylist');
-        setSelectedRole('stylist');
-        setStep('landing');
+        persistSelectedRole('stylist');
+        setStep('LandingHero');
       }
       setLoading(false);
     });
@@ -120,7 +158,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, []);
+  }, [persistSelectedRole, readPersistedRole, clearPersistedRole]);
 
   const handleAppSignOut = async () => {
     try {
@@ -140,11 +178,12 @@ export default function App() {
       try {
         const userDoc = await getDoc(doc(db, "users", user.uid));
         const role = userDoc.exists() ? (userDoc.data().role || 'stylist') : 'stylist';
-        setUserRole(role);
-      } catch {
-        setUserRole('stylist');
+          setUserRole(role);
+        } catch {
+          setUserRole('stylist');
+        }
       }
-    }
+    clearPersistedRole();
     setIsSetupComplete(true);
   };
 
@@ -195,24 +234,39 @@ export default function App() {
               isSetupComplete ? <Navigate to="/home" replace /> : (
                 <div className="bg-[#0f071e] min-h-screen w-full">
                   <AnimatePresence mode="wait">
-                    {step === 'landing' && <LandingHero key="landing" onStart={() => setStep('selection')} />}
+                    {step === 'LandingHero' && (
+                      <LandingHero
+                        key="landing"
+                        onStart={() => setStep('selection')}
+                      />
+                    )}
                     {step === 'selection' && (
                       <SelectionScreen
                         key="selection"
                         onChoice={(role) => {
-                          setSelectedRole(role);
+                          persistSelectedRole(role);
                           setStep('info');
                         }}
                       />
                     )}
-                    {step === 'info' && <OnboardingFlow key="info" onComplete={() => setStep('signup')} />}
+                    {step === 'info' && (
+                      <OnboardingFlow
+                        key="info"
+                        onBack={() => {
+                          setStep('selection');
+                        }}
+                        onComplete={() => {
+                          setStep('signup');
+                        }}
+                      />
+                    )}
                     {step === 'signup' && (
                       <div key="signup-wrapper" className="min-h-screen bg-white flex justify-center items-center p-6">
                         <div className="w-full max-w-md">
                           {selectedRole === 'client' ? (
-                            <ClientSignupSteps onSwitchToLogin={() => setStep('login')} onFinish={completeAuth} />
+                            <ClientSignupSteps onBack={() => setStep('info')} onSwitchToLogin={() => setStep('login')} onFinish={completeAuth} />
                           ) : (
-                            <SignupSteps onSwitchToLogin={() => setStep('login')} onFinish={completeAuth} />
+                            <SignupSteps onBack={() => setStep('info')} onSwitchToLogin={() => setStep('login')} onFinish={completeAuth} />
                           )}
                         </div>
                       </div>
@@ -223,7 +277,7 @@ export default function App() {
                           <Login
                             key="login"
                             preferredRole={selectedRole}
-                            onSwitchToSignup={() => setStep('signup')}
+                            onSwitchToSignup={() => setStep('selection')}
                             onLoginSuccess={completeAuth}
                           />
                         </div>
@@ -255,8 +309,8 @@ export default function App() {
             <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-md border-t border-zinc-100 px-6 py-4 flex justify-between items-center z-[40] pb-safe shadow-2xl">
               <MobileNavItem to="/home" icon={<HomeIcon size={22} />} label={isClient ? "Discover" : "Home"} />
               <MobileNavItem to="/explore" icon={<Users size={22} />} label={isClient ? "Stylists" : "Clients"} />
-              {!isClient && <MobileNavItem to="/studio" icon={<Sparkles size={22} />} label="Studio" />}
               {!isClient && <MobileNavItem to="/calendar" icon={<Calendar size={22} />} label="Calendar" />}
+              {!isClient && <MobileNavItem to="/portfolio" icon={<PortfolioIcon size={22} />} label="Portfolio" />}
               <MobileNavItem to="/profile" icon={<User size={22} />} label="Profile" />
             </nav>
           )}

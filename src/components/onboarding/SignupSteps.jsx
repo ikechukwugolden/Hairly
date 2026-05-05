@@ -11,7 +11,7 @@ import { Loader2, Camera, ChevronLeft, CheckCircle2, Check, AlertCircle, X } fro
 import { FcGoogle } from 'react-icons/fc'; 
 import { FaFacebook, FaApple } from 'react-icons/fa';
 
-export const SignupSteps = ({ onSwitchToLogin, onFinish }) => {
+export const SignupSteps = ({ onSwitchToLogin, onFinish, onBack }) => {
   const [subStep, setSubStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false); 
@@ -149,6 +149,14 @@ export const SignupSteps = ({ onSwitchToLogin, onFinish }) => {
     switch(subStep) {
       case 1: return (
         <motion.div key="step1" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-2 text-sm font-semibold text-zinc-500 transition-colors hover:text-[#7c3aed]"
+          >
+            <ChevronLeft size={18} />
+            Back
+          </button>
           <div className="text-center md:text-left">
             <h2 className="text-2xl font-bold text-zinc-900">Create Account</h2>
             <p className="text-zinc-500 text-sm">Join the Hairly community today.</p>

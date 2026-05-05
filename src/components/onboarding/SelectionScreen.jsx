@@ -14,17 +14,17 @@ export const SelectionScreen = ({ onChoice }) => (
       How would you like to use the platform today?
     </p>
     
-    <div className="flex flex-col gap-4 w-full max-w-xs">
+    <div className="flex flex-row gap-4 w-full max-w-md">
       <button 
         onClick={() => onChoice('client')} 
-        className="w-full py-5 bg-[#7c3aed] text-white rounded-[24px] font-bold shadow-xl shadow-purple-100 hover:bg-[#6d28d9] transition-all active:scale-95"
+        className="w-full py-5 bg-[#7c3aed] text-white rounded-[24px] font-bold shadow-xl shadow-purple-100 hover:bg-[#6d28d9] hover:text-[black] hover:bg-[#f8b9f0] transition-all active:scale-95"
       >
         I am a Client
       </button>
       
       <button 
         onClick={() => onChoice('stylist')} 
-        className="w-full py-5 border-2 border-zinc-100 text-zinc-800 rounded-[24px] font-bold hover:border-[#7c3aed] hover:text-[#7c3aed] transition-all active:scale-95"
+        className="w-full py-5 bg-[#7c3aed] text-white rounded-[24px] font-bold shadow-xl shadow-purple-100 hover:bg-[#6d28d9] hover:bg-[#f8b9f0] hover:text-[black] transition-all active:scale-95"
       >
         I am a Stylist
       </button>

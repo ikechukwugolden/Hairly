@@ -9,7 +9,7 @@ import { FcGoogle } from 'react-icons/fc';
 import { FaFacebook } from 'react-icons/fa';
 import { BiometricScanner } from './BiometricScanner';
 
-export const ClientSignupSteps = ({ onSwitchToLogin, onFinish }) => {
+export const ClientSignupSteps = ({ onSwitchToLogin, onFinish, onBack }) => {
   const [subStep, setSubStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -114,6 +114,14 @@ export const ClientSignupSteps = ({ onSwitchToLogin, onFinish }) => {
   // --- STEP 1: AUTHENTICATION ---
   const AuthStep = () => (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, x: -20 }} className="p-8 pt-20">
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-zinc-500 transition-colors hover:text-[#7c3aed]"
+      >
+        <ChevronLeft size={18} />
+        Back
+      </button>
       <h1 className="text-4xl font-black text-[#7c3aed] italic mb-2 tracking-tighter">Hairly</h1>
       <h2 className="text-2xl font-bold text-zinc-800 mb-8">Sign up</h2>
 

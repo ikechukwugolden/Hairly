@@ -1,71 +1,48 @@
-
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-  Search,
-  Bell,
-  Star,
-  Loader2,
-  Calendar,
-  Users,
-  Briefcase,
-  X,
-  Inbox,
-  Sparkles,
-  Filter,
-  Heart,
-  MessageCircle,
-  Share2,
-  Reply,
-  Send,
-} from 'lucide-react';
-import { auth, db } from '../../firebaseconfig';
-import {
-  doc,
-  getDoc,
-  collection,
-  query,
-  getDocs,
-  where,
-  onSnapshot,
-  updateDoc,
-  setDoc,
-  deleteDoc,
-  addDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
+import { useEffect, useMemo, useState } from 'react';
+import { Bell, CalendarDays, Loader2, Search, Star, Users } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-// eslint-disable-next-line no-unused-vars
-import { motion, AnimatePresence } from 'framer-motion';
+import { auth, db } from '../../firebaseconfig';
 
 function toMillis(value) {
   if (!value) return 0;
-  if (typeof value.toMillis === 'function') return value.toMillis();
-  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.seconds === 'number') return value.seconds * 1000;
   return 0;
 }
 
-function formatRelativeTime(value) {
-  const ms = toMillis(value);
-  if (!ms) return 'Just now';
-  const delta = Date.now() - ms;
-  const minutes = Math.floor(delta / 60000);
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(ms).toLocaleDateString();
+function toDate(value) {
+  if (!value) return null;
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+
+  if (typeof value?.toDate === 'function') {
+    const date = value.toDate();
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (typeof value === 'string') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  return null;
 }
 
-function toLocalDateKey(value = new Date()) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function getAppointmentDate(appointment) {
+  return (
+    toDate(appointment?.appointmentDate) ||
+    toDate(appointment?.scheduledAt) ||
+    toDate(appointment?.dateTime) ||
+    toDate(appointment?.date) ||
+    null
+  );
 }
 
 function isActiveBooking(status) {
@@ -73,471 +50,187 @@ function isActiveBooking(status) {
   return normalized !== 'declined' && normalized !== 'cancelled' && normalized !== 'canceled';
 }
 
-function buildReviewStats(reviews) {
-  const map = {};
-  reviews.forEach((item) => {
-    const stylistId = item?.stylistId;
-    if (!stylistId) return;
-    const rating = Number(item?.rating);
-    if (!Number.isFinite(rating)) return;
-    if (!map[stylistId]) map[stylistId] = { sum: 0, count: 0 };
-    map[stylistId].sum += rating;
-    map[stylistId].count += 1;
-  });
-  Object.keys(map).forEach((stylistId) => {
-    const entry = map[stylistId];
-    map[stylistId] = {
-      count: entry.count,
-      average: entry.count > 0 ? entry.sum / entry.count : 0,
-    };
-  });
-  return map;
+function isSameLocalDay(first, second) {
+  return (
+    first.getFullYear() === second.getFullYear() &&
+    first.getMonth() === second.getMonth() &&
+    first.getDate() === second.getDate()
+  );
 }
 
-function groupComments(comments) {
-  const parentMap = new Map();
-  const topLevel = [];
+function getPeriodLabel(appointment) {
+  const timeText = String(appointment?.time || '').trim();
 
-  comments.forEach((item) => {
-    if (!item.parentId) {
-      topLevel.push(item);
-      return;
-    }
-    if (!parentMap.has(item.parentId)) parentMap.set(item.parentId, []);
-    parentMap.get(item.parentId).push(item);
+  if (/morning/i.test(timeText)) return 'Morning';
+  if (/afternoon/i.test(timeText)) return 'Afternoon';
+  if (/evening/i.test(timeText)) return 'Evening';
+  if (timeText) return timeText;
+
+  const date = getAppointmentDate(appointment);
+  const hours = date?.getHours();
+  if (!Number.isFinite(hours)) return 'Scheduled';
+  if (hours < 12) return 'Morning';
+  if (hours < 17) return 'Afternoon';
+  return 'Evening';
+}
+
+function getDayLabel(appointment) {
+  const date = getAppointmentDate(appointment);
+  if (!date) return 'Upcoming';
+
+  const today = new Date();
+  if (isSameLocalDay(date, today)) return 'Today';
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
   });
+}
 
-  return { topLevel, parentMap };
+function getStatusLabel(status) {
+  const normalized = String(status || 'pending').toLowerCase();
+  if (normalized === 'confirmed') return 'Confirmed';
+  if (normalized === 'declined' || normalized === 'cancelled' || normalized === 'canceled') {
+    return 'Cancelled';
+  }
+  return 'Pending';
+}
+
+function getStatusClasses(status) {
+  const normalized = String(status || 'pending').toLowerCase();
+  if (normalized === 'confirmed') return 'text-emerald-500';
+  if (normalized === 'declined' || normalized === 'cancelled' || normalized === 'canceled') {
+    return 'text-red-500';
+  }
+  return 'text-amber-500';
+}
+
+function mergeUniqueById(rows) {
+  const map = new Map();
+  rows.forEach((row) => {
+    if (!row?.id) return;
+    map.set(row.id, row);
+  });
+  return Array.from(map.values());
 }
 
 export default function Home() {
   const navigate = useNavigate();
-
   const [userData, setUserData] = useState(null);
-  const [currentUserId, setCurrentUserId] = useState(null);
-  const [topStylists, setTopStylists] = useState([]);
-  const [sharedPortfolioStyles, setSharedPortfolioStyles] = useState([]);
-  const [upcomingAppointments, setUpcomingAppointments] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ clients: 0, revenue: 0, rating: 0 });
-  const [followStats, setFollowStats] = useState({ followers: 0, following: 0 });
-  const [todayBookingLoad, setTodayBookingLoad] = useState({});
-  const [reviewStatsByStylist, setReviewStatsByStylist] = useState({});
-
-  const [notifications, setNotifications] = useState([]);
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
-  const [isNotifLoading, setIsNotifLoading] = useState(true);
-  const notifPanelRef = useRef(null);
-
-  const [postLikes, setPostLikes] = useState({});
-  const [postCommentsCount, setPostCommentsCount] = useState({});
-  const [userLikedPosts, setUserLikedPosts] = useState({});
-  const engagementUnsubsRef = useRef([]);
-
-  const [isCommentsOpen, setIsCommentsOpen] = useState(false);
-  const [activePostForComments, setActivePostForComments] = useState(null);
-  const [comments, setComments] = useState([]);
-  const [commentInput, setCommentInput] = useState('');
-  const [replyTarget, setReplyTarget] = useState(null);
-  const [isSendingComment, setIsSendingComment] = useState(false);
-
-  const [toast, setToast] = useState({ show: false, message: '', type: 'info' });
-  const toastTimerRef = useRef(null);
-
+  const [featuredStyles, setFeaturedStyles] = useState([]);
+  const [appointments, setAppointments] = useState([]);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchUrl, setSearchUrl] = useState('');
-
-  const unreadCount = notifications.filter((item) => item.read !== true).length;
-  const actorDisplayName =
-    userData?.businessName ||
-    userData?.fullName ||
-    auth.currentUser?.displayName ||
-    'Someone';
-
-  const topStylistsRanked = useMemo(() => {
-    const withLiveRatings = topStylists.map((stylist) => {
-      const live = reviewStatsByStylist[stylist.id];
-      return {
-        ...stylist,
-        rating: live ? Number(live.average.toFixed(1)) : Number(stylist.rating || 0),
-        reviewCount: live ? live.count : Number(stylist.reviewCount || 0),
-      };
-    });
-    return withLiveRatings
-      .sort((a, b) => {
-        const byRating = (Number(b.rating) || 0) - (Number(a.rating) || 0);
-        if (byRating !== 0) return byRating;
-        return (Number(b.reviewCount) || 0) - (Number(a.reviewCount) || 0);
-      })
-      .slice(0, 12);
-  }, [reviewStatsByStylist, topStylists]);
-
-  const stylistLookup = useMemo(() => {
-    const map = {};
-    topStylistsRanked.forEach((stylist) => {
-      map[stylist.id] = stylist;
-    });
-    return map;
-  }, [topStylistsRanked]);
-
-  const showToast = useCallback((message, type = 'info', duration = 2600) => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast({ show: true, message, type });
-    toastTimerRef.current = setTimeout(() => {
-      setToast((prev) => ({ ...prev, show: false }));
-    }, duration);
-  }, []);
-
-  const sendEngagementNotification = useCallback(
-    async ({ recipientId, type, title, message, postId, styleName }) => {
-      const actor = auth.currentUser;
-      if (!actor || !recipientId || recipientId === actor.uid) return;
-
-      try {
-        await addDoc(collection(db, 'notifications'), {
-          userId: recipientId,
-          actorId: actor.uid,
-          actorName: actorDisplayName,
-          type,
-          title,
-          message,
-          postId: postId || null,
-          styleName: styleName || null,
-          read: false,
-          createdAt: serverTimestamp(),
-        });
-      } catch (error) {
-        console.error('Failed to create notification:', error);
-      }
-    },
-    [actorDisplayName]
-  );
-
-  const handleSearch = (e) => {
-    if (e.key === 'Enter' && searchQuery.trim() !== '') {
-      const url = `https://www.bing.com/images/search?q=${encodeURIComponent(`${searchQuery} hairstyle`)}&form=HDRSC2`;
-      setSearchUrl(url);
-      setIsSearching(true);
-    }
-  };
-
-  const markAllNotificationsRead = useCallback(async () => {
-    const unreadItems = notifications.filter((item) => item.read !== true);
-    if (unreadItems.length === 0) return;
-    try {
-      await Promise.all(
-        unreadItems.map((item) => updateDoc(doc(db, 'notifications', item.id), { read: true }))
-      );
-    } catch (error) {
-      console.error('Failed to mark notifications as read:', error);
-    }
-  }, [notifications]);
-
-  const handleToggleLike = useCallback(
-    async (post) => {
-      const user = auth.currentUser;
-      if (!user || !post?.id) {
-        showToast('Please login first.', 'warning');
-        return;
-      }
-
-      const likeRef = doc(db, 'styles', post.id, 'likes', user.uid);
-      const postOwnerId = post.ownerId || post.stylistId || null;
-      try {
-        if (userLikedPosts[post.id]) {
-          await deleteDoc(likeRef);
-        } else {
-          await setDoc(likeRef, { userId: user.uid, createdAt: serverTimestamp() });
-          await sendEngagementNotification({
-            recipientId: postOwnerId,
-            type: 'like',
-            title: 'New like on your post',
-            message: `${actorDisplayName} liked "${post.styleName || 'your style'}".`,
-            postId: post.id,
-            styleName: post.styleName || null,
-          });
-        }
-      } catch (error) {
-        console.error('Like toggle failed:', error);
-        showToast('Could not update like right now.', 'error');
-      }
-    },
-    [actorDisplayName, sendEngagementNotification, showToast, userLikedPosts]
-  );
-
-  const handleSharePost = useCallback(
-    async (post) => {
-      const shareText = `Check out this hairstyle: ${post?.styleName || 'Hair Style'}`;
-      const shareUrl = `${window.location.origin}/portfolio`;
-
-      try {
-        if (navigator.share) {
-          await navigator.share({ title: 'Hairly Portfolio Post', text: shareText, url: shareUrl });
-          showToast('Post shared.', 'success');
-          return;
-        }
-
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(`${shareText} ${shareUrl}`);
-          showToast('Share link copied.', 'success');
-          return;
-        }
-
-        showToast('Sharing is not available on this device.', 'warning');
-      } catch {
-        showToast('Could not share right now.', 'error');
-      }
-    },
-    [showToast]
-  );
-
-  const openComments = useCallback((post) => {
-    setActivePostForComments(post);
-    setComments([]);
-    setCommentInput('');
-    setReplyTarget(null);
-    setIsCommentsOpen(true);
-  }, []);
-
-  const closeComments = useCallback(() => {
-    setIsCommentsOpen(false);
-    setActivePostForComments(null);
-    setComments([]);
-    setCommentInput('');
-    setReplyTarget(null);
-  }, []);
-
-  const handleSubmitComment = useCallback(
-    async (e) => {
-      e.preventDefault();
-      const text = commentInput.trim();
-      const user = auth.currentUser;
-      if (!text || !user || !activePostForComments?.id || isSendingComment) return;
-
-      setIsSendingComment(true);
-      try {
-        const postOwnerId = activePostForComments.ownerId || activePostForComments.stylistId || null;
-        const parentComment = replyTarget?.id
-          ? comments.find((item) => item.id === replyTarget.id)
-          : null;
-        const isReply = Boolean(replyTarget?.id);
-
-        await addDoc(collection(db, 'styles', activePostForComments.id, 'comments'), {
-          userId: user.uid,
-          userName: userData?.businessName || userData?.fullName || user.displayName || 'User',
-          userImage: userData?.profileImage || user.photoURL || '',
-          text,
-          parentId: replyTarget?.id || null,
-          createdAt: serverTimestamp(),
-        });
-
-        await sendEngagementNotification({
-          recipientId: postOwnerId,
-          type: isReply ? 'reply' : 'comment',
-          title: isReply ? 'New reply on your post' : 'New comment on your post',
-          message: isReply
-            ? `${actorDisplayName} replied on "${activePostForComments.styleName || 'your post'}".`
-            : `${actorDisplayName} commented on "${activePostForComments.styleName || 'your post'}".`,
-          postId: activePostForComments.id,
-          styleName: activePostForComments.styleName || null,
-        });
-
-        if (
-          isReply &&
-          parentComment?.userId &&
-          parentComment.userId !== user.uid &&
-          parentComment.userId !== postOwnerId
-        ) {
-          await sendEngagementNotification({
-            recipientId: parentComment.userId,
-            type: 'reply',
-            title: 'New reply to your comment',
-            message: `${actorDisplayName} replied: "${text.slice(0, 120)}"`,
-            postId: activePostForComments.id,
-            styleName: activePostForComments.styleName || null,
-          });
-        }
-
-        setCommentInput('');
-        setReplyTarget(null);
-      } catch (error) {
-        console.error('Comment failed:', error);
-        showToast('Could not send comment right now.', 'error');
-      } finally {
-        setIsSendingComment(false);
-      }
-    },
-    [
-      activePostForComments,
-      actorDisplayName,
-      commentInput,
-      comments,
-      isSendingComment,
-      replyTarget,
-      sendEngagementNotification,
-      showToast,
-      userData,
-    ]
-  );
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let unsubscribeSharedStyles = () => {};
-    let unsubscribeNotifications = () => {};
-    let unsubscribeStylists = () => {};
+    let unsubscribeAppointments = () => {};
     let unsubscribeFollowers = () => {};
-    let unsubscribeFollowing = () => {};
-    let unsubscribeTodayBookings = () => {};
-    let unsubscribeReviews = () => {};
+    let unsubscribeNotifications = () => {};
+    let unsubscribeOwnedStyles = () => {};
+    let unsubscribeLegacyStyles = () => {};
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      unsubscribeSharedStyles();
-      unsubscribeNotifications();
-      unsubscribeStylists();
+      unsubscribeAppointments();
       unsubscribeFollowers();
-      unsubscribeFollowing();
-      unsubscribeTodayBookings();
-      unsubscribeReviews();
-      setCurrentUserId(user?.uid || null);
+      unsubscribeNotifications();
+      unsubscribeOwnedStyles();
+      unsubscribeLegacyStyles();
 
       if (!user) {
-        setNotifications([]);
-        setIsNotifLoading(false);
-        setTopStylists([]);
-        setSharedPortfolioStyles([]);
-        setFollowStats({ followers: 0, following: 0 });
-        setTodayBookingLoad({});
-        setReviewStatsByStylist({});
+        setUserData(null);
+        setFeaturedStyles([]);
+        setAppointments([]);
+        setFollowersCount(0);
+        setUnreadCount(0);
+        setLoading(false);
         navigate('/');
         return;
       }
 
+      setLoading(true);
+
       try {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        const profileData = userDoc.exists() ? userDoc.data() : null;
-        if (profileData) setUserData(profileData);
+        const profileSnapshot = await getDoc(doc(db, 'users', user.uid));
+        const profile = profileSnapshot.exists() ? profileSnapshot.data() : null;
+        setUserData(profile);
 
-        const appointmentsRef = collection(db, 'appointments');
-        const appointmentsQuery = query(appointmentsRef, where('stylistId', '==', user.uid));
-        const appointmentsSnapshot = await getDocs(appointmentsQuery);
-        const appointmentsData = appointmentsSnapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-        setUpcomingAppointments(appointmentsData);
-
-        const totalRevenue = appointmentsData.reduce((sum, apt) => sum + (Number(apt.price) || 0), 0);
-        const uniqueClients = new Set(appointmentsData.map((apt) => apt.clientEmail || apt.clientId)).size;
-
-        setStats({
-          clients: uniqueClients || 0,
-          revenue: totalRevenue || 0,
-          rating: Number(profileData?.rating || 0),
-        });
-
-        const stylistsQuery = query(collection(db, 'users'), where('role', '==', 'stylist'));
-        unsubscribeStylists = onSnapshot(
-          stylistsQuery,
+        const appointmentsQuery = query(collection(db, 'appointments'), where('stylistId', '==', user.uid));
+        unsubscribeAppointments = onSnapshot(
+          appointmentsQuery,
           (snapshot) => {
-            const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-            setTopStylists(list);
+            const rows = snapshot.docs.map((docSnapshot) => ({
+              id: docSnapshot.id,
+              ...docSnapshot.data(),
+            }));
+            setAppointments(rows);
           },
-          (error) => {
-            console.error('Stylists stream error:', error);
-            setTopStylists([]);
-          }
-        );
-
-        unsubscribeReviews = onSnapshot(
-          collection(db, 'reviews'),
-          (snapshot) => {
-            const rows = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-            const nextStats = buildReviewStats(rows);
-            setReviewStatsByStylist(nextStats);
-            const myLiveRating = nextStats[user.uid]?.average;
-            if (Number.isFinite(myLiveRating)) {
-              setStats((prev) => ({ ...prev, rating: Number(myLiveRating.toFixed(1)) }));
-            }
-          },
-          () => {
-            setReviewStatsByStylist({});
-          }
-        );
-
-        const sharedQuery = query(collection(db, 'styles'), where('sharedToHome', '==', true));
-        unsubscribeSharedStyles = onSnapshot(
-          sharedQuery,
-          (snapshot) => {
-            const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-            list.sort(
-              (a, b) =>
-                (toMillis(b.sharedAt) || toMillis(b.createdAt)) -
-                (toMillis(a.sharedAt) || toMillis(a.createdAt))
-            );
-            setSharedPortfolioStyles(list.slice(0, 24));
-          },
-          (error) => {
-            console.error('Shared styles stream error:', error);
-            setSharedPortfolioStyles([]);
-          }
-        );
-
-        const notificationsQuery = query(collection(db, 'notifications'), where('userId', '==', user.uid));
-        setIsNotifLoading(true);
-        unsubscribeNotifications = onSnapshot(
-          notificationsQuery,
-          (snapshot) => {
-            const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-            list.sort(
-              (a, b) =>
-                (toMillis(b.createdAt) || toMillis(b.timestamp)) -
-                (toMillis(a.createdAt) || toMillis(a.timestamp))
-            );
-            setNotifications(list);
-            setIsNotifLoading(false);
-          },
-          (error) => {
-            console.error('Notification stream error:', error);
-            setNotifications([]);
-            setIsNotifLoading(false);
-          }
+          () => setAppointments([])
         );
 
         const followersQuery = query(collection(db, 'follows'), where('stylistId', '==', user.uid));
         unsubscribeFollowers = onSnapshot(
           followersQuery,
+          (snapshot) => setFollowersCount(snapshot.size),
+          () => setFollowersCount(0)
+        );
+
+        const notificationsQuery = query(collection(db, 'notifications'), where('userId', '==', user.uid));
+        unsubscribeNotifications = onSnapshot(
+          notificationsQuery,
           (snapshot) => {
-            setFollowStats((prev) => ({ ...prev, followers: snapshot.size }));
+            const totalUnread = snapshot.docs.reduce((count, docSnapshot) => {
+              return docSnapshot.data()?.read === true ? count : count + 1;
+            }, 0);
+            setUnreadCount(totalUnread);
+          },
+          () => setUnreadCount(0)
+        );
+
+        let ownedStyles = [];
+        let legacyStyles = [];
+
+        const pushMergedStyles = () => {
+          const merged = mergeUniqueById([...ownedStyles, ...legacyStyles])
+            .sort(
+              (first, second) =>
+                (toMillis(second.sharedAt) || toMillis(second.createdAt)) -
+                (toMillis(first.sharedAt) || toMillis(first.createdAt))
+            )
+            .slice(0, 8);
+          setFeaturedStyles(merged);
+        };
+
+        const ownedStylesQuery = query(collection(db, 'styles'), where('ownerId', '==', user.uid));
+        unsubscribeOwnedStyles = onSnapshot(
+          ownedStylesQuery,
+          (snapshot) => {
+            ownedStyles = snapshot.docs.map((docSnapshot) => ({
+              id: docSnapshot.id,
+              ...docSnapshot.data(),
+            }));
+            pushMergedStyles();
           },
           () => {
-            setFollowStats((prev) => ({ ...prev, followers: 0 }));
+            ownedStyles = [];
+            pushMergedStyles();
           }
         );
 
-        const followingQuery = query(collection(db, 'follows'), where('followerId', '==', user.uid));
-        unsubscribeFollowing = onSnapshot(
-          followingQuery,
+        const legacyStylesQuery = query(collection(db, 'styles'), where('stylistId', '==', user.uid));
+        unsubscribeLegacyStyles = onSnapshot(
+          legacyStylesQuery,
           (snapshot) => {
-            setFollowStats((prev) => ({ ...prev, following: snapshot.size }));
+            legacyStyles = snapshot.docs.map((docSnapshot) => ({
+              id: docSnapshot.id,
+              ...docSnapshot.data(),
+            }));
+            pushMergedStyles();
           },
           () => {
-            setFollowStats((prev) => ({ ...prev, following: 0 }));
-          }
-        );
-
-        const todayKey = toLocalDateKey(new Date());
-        const todayBookingsQuery = query(collection(db, 'appointments'), where('date', '==', todayKey));
-        unsubscribeTodayBookings = onSnapshot(
-          todayBookingsQuery,
-          (snapshot) => {
-            const map = {};
-            snapshot.docs.forEach((docSnap) => {
-              const data = docSnap.data();
-              const stylistId = data?.stylistId;
-              if (!stylistId || !isActiveBooking(data?.status)) return;
-              map[stylistId] = (map[stylistId] || 0) + 1;
-            });
-            setTodayBookingLoad(map);
-          },
-          () => {
-            setTodayBookingLoad({});
+            legacyStyles = [];
+            pushMergedStyles();
           }
         );
       } catch (error) {
@@ -548,585 +241,264 @@ export default function Home() {
     });
 
     return () => {
-      unsubscribeSharedStyles();
-      unsubscribeNotifications();
-      unsubscribeStylists();
+      unsubscribeAppointments();
       unsubscribeFollowers();
-      unsubscribeFollowing();
-      unsubscribeTodayBookings();
-      unsubscribeReviews();
+      unsubscribeNotifications();
+      unsubscribeOwnedStyles();
+      unsubscribeLegacyStyles();
       unsubscribeAuth();
     };
   }, [navigate]);
 
-  useEffect(() => {
-    engagementUnsubsRef.current.forEach((fn) => fn());
-    engagementUnsubsRef.current = [];
+  const displayName =
+    userData?.businessName ||
+    userData?.fullName ||
+    auth.currentUser?.displayName ||
+    'Beauty Hub';
 
-    if (sharedPortfolioStyles.length === 0) {
-      setPostLikes({});
-      setPostCommentsCount({});
-      setUserLikedPosts({});
-      return;
-    }
+  const profileImage =
+    userData?.profileImage ||
+    auth.currentUser?.photoURL ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=f4f4f5&color=7c3aed`;
 
-    sharedPortfolioStyles.forEach((post) => {
-      if (!post?.id) return;
-      const likesCol = collection(db, 'styles', post.id, 'likes');
-      const commentsCol = collection(db, 'styles', post.id, 'comments');
+  const ratingLabel = Number.isFinite(Number(userData?.rating))
+    ? Number(userData.rating).toFixed(1)
+    : '4.8';
 
-      const unsubLikes = onSnapshot(likesCol, (snapshot) => {
-        setPostLikes((prev) => ({ ...prev, [post.id]: snapshot.size }));
-        if (currentUserId) {
-          setUserLikedPosts((prev) => ({
-            ...prev,
-            [post.id]: snapshot.docs.some((docSnap) => docSnap.id === currentUserId),
-          }));
-        }
+  const uniqueClientsCount = useMemo(() => {
+    return new Set(
+      appointments
+        .map((appointment) => {
+          return (
+            appointment?.clientId ||
+            appointment?.customerId ||
+            appointment?.clientEmail ||
+            appointment?.customerEmail ||
+            appointment?.clientName ||
+            appointment?.customerName ||
+            null
+          );
+        })
+        .filter(Boolean)
+    ).size;
+  }, [appointments]);
+
+  const activeUpcomingAppointments = useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    return appointments
+      .filter((appointment) => {
+        if (!isActiveBooking(appointment?.status)) return false;
+        const date = getAppointmentDate(appointment);
+        if (!date) return true;
+        return date >= startOfToday;
+      })
+      .sort((first, second) => {
+        const firstTime = getAppointmentDate(first)?.getTime() || 0;
+        const secondTime = getAppointmentDate(second)?.getTime() || 0;
+        return firstTime - secondTime;
       });
+  }, [appointments]);
 
-      const unsubComments = onSnapshot(commentsCol, (snapshot) => {
-        setPostCommentsCount((prev) => ({ ...prev, [post.id]: snapshot.size }));
-      });
+  const stats = [
+    { label: 'Clients', value: uniqueClientsCount, icon: Users },
+    { label: 'Followers', value: followersCount, icon: Users },
+    { label: 'Upcoming', value: activeUpcomingAppointments.length, icon: CalendarDays },
+  ];
 
-      engagementUnsubsRef.current.push(unsubLikes, unsubComments);
-    });
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) return;
 
-    return () => {
-      engagementUnsubsRef.current.forEach((fn) => fn());
-      engagementUnsubsRef.current = [];
-    };
-  }, [currentUserId, sharedPortfolioStyles]);
-
-  useEffect(() => {
-    if (!isNotifOpen) return undefined;
-
-    const handleOutsideClick = (event) => {
-      if (notifPanelRef.current && !notifPanelRef.current.contains(event.target)) {
-        setIsNotifOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [isNotifOpen]);
-
-  useEffect(() => {
-    if (!isCommentsOpen || !activePostForComments?.id) return undefined;
-
-    const commentsQuery = query(collection(db, 'styles', activePostForComments.id, 'comments'));
-    const unsubscribe = onSnapshot(
-      commentsQuery,
-      (snapshot) => {
-        const list = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
-        list.sort((a, b) => toMillis(a.createdAt) - toMillis(b.createdAt));
-        setComments(list);
-      },
-      (error) => {
-        console.error('Comments stream error:', error);
-        setComments([]);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [activePostForComments, isCommentsOpen]);
-
-  useEffect(() => () => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-  }, []);
-
-  const { topLevel: topComments, parentMap: repliesByParent } = useMemo(
-    () => groupComments(comments),
-    [comments]
-  );
-
-  const portfolioFeed = sharedPortfolioStyles.slice(0, 8);
-  const inspirationFeed = sharedPortfolioStyles.slice(0, 12);
+    const url = `https://www.bing.com/images/search?q=${encodeURIComponent(`${trimmedQuery} hairstyle`)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <Loader2 className="animate-spin text-[#7c3aed]" size={40} />
+      <div className="flex min-h-screen items-center justify-center bg-[#f6f4fb] pb-28 lg:pb-10">
+        <div className="flex flex-col items-center gap-3 text-[#7c52d4]">
+          <Loader2 className="animate-spin" size={30} />
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#7c52d4]/70">
+            Loading dashboard
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#fcfcfc] w-full pb-24 font-sans relative overflow-x-hidden">
-      <AnimatePresence>
-        {isSearching && (
-          <motion.div
-            initial={{ y: '100%' }}
-            animate={{ y: 0 }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed inset-0 z-[100] bg-white flex flex-col"
-          >
-            <div className="p-4 border-b flex items-center justify-between bg-white shadow-sm">
-              <div className="flex items-center gap-3">
-                <button onClick={() => setIsSearching(false)} className="p-2 hover:bg-zinc-100 rounded-full">
-                  <X size={20} />
-                </button>
-                <div>
-                  <p className="text-[10px] font-bold text-[#7c3aed] uppercase tracking-widest">Live Web Search</p>
-                  <h2 className="font-bold text-zinc-800 line-clamp-1">{searchQuery}</h2>
+    <div className="min-h-screen bg-[#f6f4fb] pb-28 lg:pb-10">
+      <div className="mx-auto w-full max-w-7xl px-3 pt-3 sm:px-5 sm:pt-5 lg:px-8 lg:pt-7">
+        <div className="space-y-4 md:space-y-5">
+          <section className="rounded-[26px] bg-gradient-to-br from-[#8d5be6] via-[#7e58d8] to-[#6f49cc] p-4 text-white shadow-[0_18px_48px_rgba(111,73,204,0.35)] sm:p-5 md:rounded-[32px] md:p-7">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3 md:gap-4">
+                <img
+                  src={profileImage}
+                  alt={displayName}
+                  className="h-12 w-12 rounded-full border-2 border-white/60 object-cover md:h-16 md:w-16"
+                />
+                <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-white/75 md:text-[11px]">
+                    Stylist homepage
+                  </p>
+                  <h1 className="truncate text-base font-semibold md:text-2xl">{displayName}</h1>
+                  <div className="mt-1 flex items-center gap-1 text-xs text-white/90 md:text-sm">
+                    <span>{ratingLabel}</span>
+                    <Star size={12} className="fill-yellow-300 text-yellow-300 md:h-4 md:w-4" />
+                  </div>
                 </div>
               </div>
-            </div>
-            <iframe src={searchUrl} className="flex-1 w-full border-none" title="Search Results" />
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      <div className="bg-[#7c3aed] p-6 pt-12 pb-16 rounded-b-[40px] relative">
-        <div className="max-w-6xl mx-auto flex items-center justify-between relative z-50">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl border-2 border-white/30 overflow-hidden bg-white/10 shadow-inner">
-              <img
-                src={
-                  userData?.profileImage ||
-                  `https://ui-avatars.com/api/?name=${userData?.fullName || 'User'}&background=fff&color=7c3aed`
-                }
-                className="w-full h-full object-cover"
-                alt="profile"
-              />
-            </div>
-            <div className="text-white">
-              <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Welcome back,</p>
-              <h1 className="font-bold text-xl leading-tight">{userData?.businessName || userData?.fullName || 'Stylist Hub'}</h1>
-            </div>
-          </div>
-
-          <div className="flex gap-2 relative">
-            <button
-              type="button"
-              onClick={() => setIsNotifOpen((prev) => !prev)}
-              className="relative p-3 bg-white/10 rounded-full backdrop-blur-md hover:bg-white/15 transition-colors"
-            >
-              <Bell className="text-white" size={22} />
-              {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[1.25rem] h-5 px-1 bg-red-500 text-white text-[10px] font-black rounded-full border border-[#7c3aed] flex items-center justify-center">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
-
-            <AnimatePresence>
-              {isNotifOpen && (
-                <motion.div
-                  ref={notifPanelRef}
-                  initial={{ opacity: 0, y: -12, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -10, scale: 0.98 }}
-                  className="absolute right-0 top-14 w-[min(24rem,calc(100vw-2rem))] rounded-3xl bg-white text-zinc-900 shadow-2xl border border-zinc-100 p-4 z-[120]"
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Activity</p>
-                      <h3 className="font-black text-sm">Notifications</h3>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => navigate('/notifications')}
-                      className="text-[10px] font-black uppercase tracking-widest text-[#7c3aed] hover:text-[#6d28d9]"
-                    >
-                      View all
-                    </button>
-                  </div>
-
-                  {isNotifLoading ? (
-                    <div className="py-8 text-center text-xs font-bold text-zinc-400">Loading notifications...</div>
-                  ) : notifications.length === 0 ? (
-                    <div className="py-10 text-center">
-                      <Bell className="mx-auto text-zinc-300 mb-3" size={22} />
-                      <p className="text-sm font-bold text-zinc-500">No notifications yet.</p>
-                      <p className="text-[11px] text-zinc-400 mt-1">You will see real updates here automatically.</p>
-                    </div>
-                  ) : (
-                    <>
-                      {unreadCount > 0 && (
-                        <button
-                          type="button"
-                          onClick={markAllNotificationsRead}
-                          className="mb-3 text-[10px] font-black uppercase tracking-widest text-[#7c3aed] hover:text-[#6d28d9]"
-                        >
-                          Mark all as read
-                        </button>
-                      )}
-                      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                        {notifications.slice(0, 8).map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => navigate('/notifications')}
-                            className={`w-full text-left p-3 rounded-2xl border transition-colors ${
-                              item.read === true ? 'bg-zinc-50 border-zinc-100' : 'bg-violet-50 border-violet-200'
-                            }`}
-                          >
-                            <p className="font-black text-xs text-zinc-800 line-clamp-1">{item.title || 'Notification'}</p>
-                            <p className="text-[11px] text-zinc-500 mt-1 line-clamp-2">
-                              {item.message || 'You have a new account update.'}
-                            </p>
-                            <p className="text-[10px] text-zinc-400 mt-2 uppercase font-bold tracking-wider">
-                              {formatRelativeTime(item.createdAt || item.timestamp)}
-                            </p>
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        </div>
-
-        <div className="max-w-6xl mx-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-8 relative z-10">
-          {[
-            { label: 'Clients', val: stats.clients, icon: <Users size={16} /> },
-            { label: 'Rating', val: stats.rating || '0.0', icon: <Star size={16} /> },
-            { label: 'Revenue', val: `NGN ${(stats.revenue / 1000).toFixed(1)}k`, icon: <Briefcase size={16} /> },
-            { label: 'Followers', val: followStats.followers || 0, icon: <Users size={16} /> },
-            { label: 'Following', val: followStats.following || 0, icon: <Users size={16} /> },
-          ].map((stat, i) => (
-            <div key={i} className="flex-1 bg-white/10 backdrop-blur-xl rounded-2xl p-3 text-center text-white border border-white/5">
-              <p className="font-black text-lg">{stat.val}</p>
-              <p className="text-[8px] uppercase font-bold tracking-widest opacity-60">{stat.label}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="max-w-6xl mx-auto px-6 mt-[-28px] relative z-20">
-        <div className="shadow-2xl rounded-3xl overflow-hidden mb-8">
-          <div className="relative">
-            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-zinc-400" size={20} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={handleSearch}
-              placeholder="Search hairstyle trends..."
-              className="w-full bg-white p-6 pl-14 text-sm font-medium outline-none border-none"
-            />
-          </div>
-        </div>
-
-        <div className="mb-10">
-          <div className="flex justify-between items-end mb-4">
-            <h2 className="font-black text-zinc-800 text-lg italic tracking-tighter">Top Stylists</h2>
-            <button type="button" onClick={() => navigate('/explore')} className="text-[10px] font-bold text-[#7c3aed] uppercase tracking-widest">
-              See All
-            </button>
-          </div>
-
-          {topStylistsRanked.length === 0 ? (
-            <div className="bg-zinc-50 border-2 border-dashed border-zinc-200 rounded-[28px] p-6 text-center">
-              <p className="text-zinc-400 font-bold text-sm">No stylists found in the app yet.</p>
-            </div>
-          ) : (
-            <div className="flex gap-5 overflow-x-auto pb-2 scrollbar-hide">
-              {topStylistsRanked.map((stylist) => {
-                const dailyLimit = Math.max(1, Number(stylist.bookingLimitPerDay) || 10);
-                const bookedToday = todayBookingLoad[stylist.id] || 0;
-                const remainingToday = Math.max(dailyLimit - bookedToday, 0);
-                const isActive = stylist.isActive === true;
-                const isAccepting = stylist.acceptingBookings !== false;
-                const availabilityLabel = !isAccepting
-                  ? 'Unavailable'
-                  : remainingToday > 0
-                    ? `${remainingToday} slots left`
-                    : 'Fully booked';
-
-                return (
-                <button key={stylist.id} type="button" onClick={() => navigate(`/explore/${stylist.id}`)} className="flex-shrink-0 flex flex-col items-center gap-1.5">
-                  <div className="relative w-16 h-16 rounded-full border-2 border-[#7c3aed] p-0.5">
-                    <img
-                      src={stylist.profileImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(stylist.businessName || stylist.fullName || 'Stylist')}&background=f4f4f5&color=7c3aed`}
-                      className="w-full h-full rounded-full object-cover"
-                      alt={stylist.businessName || stylist.fullName || 'Stylist'}
-                    />
-                    <span className={`absolute bottom-0 right-0 block w-3 h-3 rounded-full border-2 border-white ${isActive ? 'bg-emerald-500' : 'bg-zinc-300'}`} />
-                  </div>
-                  <span className="text-[9px] font-bold text-zinc-500 max-w-16 truncate">{stylist.businessName || stylist.fullName || 'Stylist'}</span>
-                  <span
-                    className={`text-[8px] font-black uppercase tracking-wider ${
-                      !isAccepting
-                        ? 'text-red-500'
-                        : remainingToday > 0
-                          ? 'text-emerald-600'
-                          : 'text-amber-600'
-                    }`}
-                  >
-                    {availabilityLabel}
+              <button
+                type="button"
+                onClick={() => navigate('/notifications')}
+                className="relative flex h-10 w-10 items-center justify-center rounded-full bg-white/12 transition hover:bg-white/20 md:h-11 md:w-11"
+                aria-label="Open notifications"
+              >
+                <Bell size={18} />
+                {unreadCount > 0 && (
+                  <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
+                    {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
-                </button>
+                )}
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2.5 md:mt-6 md:gap-3">
+              {stats.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div
+                    key={item.label}
+                    className="rounded-[14px] border border-white/20 bg-white/14 px-3 py-2.5 backdrop-blur-sm md:rounded-[18px] md:px-4 md:py-3"
+                  >
+                    <Icon size={13} className="text-white/90 md:h-4 md:w-4" />
+                    <p className="mt-1 text-lg font-bold leading-none md:mt-2 md:text-2xl">{item.value}</p>
+                    <p className="mt-1 text-[11px] text-white/80 md:text-xs">{item.label}</p>
+                  </div>
                 );
               })}
             </div>
-          )}
-        </div>
+          </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-          <div className="lg:col-span-2 space-y-10">
-            <section>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="font-black text-zinc-800 text-2xl italic tracking-tighter">Portfolio Feed</h2>
-                <Filter size={20} className="text-zinc-400" />
-              </div>
+          <form onSubmit={handleSearchSubmit}>
+            <div className="relative overflow-hidden rounded-[16px] border border-zinc-200 bg-white shadow-sm md:rounded-[20px]">
+              <Search
+                size={18}
+                className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Find a style or hairstyle inspiration"
+                className="w-full bg-transparent py-3.5 pl-11 pr-4 text-sm text-zinc-700 outline-none md:py-4 md:text-[15px]"
+              />
+            </div>
+          </form>
 
-              {portfolioFeed.length === 0 ? (
-                <div className="bg-zinc-50 border-2 border-dashed border-zinc-200 rounded-[32px] p-10 text-center">
-                  <p className="text-zinc-400 font-bold text-sm">No shared portfolio posts yet.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-4">
-                  {portfolioFeed.map((style) => {
-                    const ownerId = style.ownerId || style.stylistId;
-                    const owner = stylistLookup[ownerId];
-                    return (
-                      <motion.button key={style.id} type="button" whileHover={{ y: -5 }} onClick={() => openComments(style)} className="aspect-[3/4] rounded-[32px] overflow-hidden relative shadow-sm group text-left">
-                        <img src={style.image} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" alt={style.styleName || 'Style'} />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent p-5 flex flex-col justify-end">
-                          <p className="text-white font-black text-sm line-clamp-1">{style.styleName || 'Shared Style'}</p>
-                          <p className="text-white/70 text-[10px] uppercase font-bold tracking-widest line-clamp-1">
-                            {owner?.businessName || owner?.fullName || style.ownerName || 'Hairly Stylist'}
-                          </p>
-                        </div>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-
-            <section>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="font-black text-zinc-800 text-2xl italic tracking-tighter">Web Inspiration</h2>
-                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">From app portfolio posts</span>
-              </div>
-
-              {inspirationFeed.length === 0 ? (
-                <div className="bg-zinc-50 border-2 border-dashed border-zinc-200 rounded-[32px] p-10 text-center">
-                  <p className="text-zinc-400 font-bold text-sm">No inspiration posts yet.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {inspirationFeed.map((post) => {
-                    const likes = postLikes[post.id] || 0;
-                    const commentsCount = postCommentsCount[post.id] || 0;
-                    const isLiked = userLikedPosts[post.id] === true;
-                    const ownerId = post.ownerId || post.stylistId;
-                    const owner = stylistLookup[ownerId];
-
-                    return (
-                      <article key={post.id} className="bg-white rounded-3xl border border-zinc-100 overflow-hidden shadow-sm">
-                        <div className="aspect-[4/5] relative overflow-hidden">
-                          <img src={post.image} className="w-full h-full object-cover" alt={post.styleName || 'Style'} />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-                          <div className="absolute bottom-3 left-3 right-3">
-                            <p className="text-white font-black text-sm line-clamp-1">{post.styleName || 'Shared Style'}</p>
-                            <p className="text-white/70 text-[10px] uppercase font-bold tracking-widest line-clamp-1">
-                              {owner?.businessName || owner?.fullName || post.ownerName || 'Hairly Stylist'}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="p-3 border-t border-zinc-100 flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleLike(post)}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-black ${
-                              isLiked ? 'bg-rose-50 text-rose-600' : 'bg-zinc-100 text-zinc-600'
-                            }`}
-                          >
-                            <Heart size={14} className={isLiked ? 'fill-rose-500 text-rose-500' : ''} />
-                            {likes}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => openComments(post)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-black bg-zinc-100 text-zinc-600"
-                          >
-                            <MessageCircle size={14} />
-                            {commentsCount}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleSharePost(post)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11px] font-black bg-zinc-100 text-zinc-600"
-                          >
-                            <Share2 size={14} />
-                            Share
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </div>
-
-          <div className="lg:col-span-1 space-y-8">
-            <div className="bg-[#1a0f2e] rounded-[40px] p-8 text-white relative overflow-hidden shadow-xl shadow-purple-200">
-              <div className="relative z-10">
-                <div className="w-12 h-12 bg-[#7c3aed] rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-purple-500/20">
-                  <Sparkles className="text-white" size={24} />
-                </div>
-                <h3 className="font-black text-2xl mb-2 leading-tight">AI Style Studio</h3>
-                <p className="text-white/50 text-xs font-medium mb-8 leading-relaxed">
-                  Visualize any hairstyle on your own face using our proprietary AI engine.
-                </p>
-                <button onClick={() => navigate('/studio')} className="w-full py-4 bg-[#7c3aed] rounded-2xl font-black text-sm tracking-widest uppercase hover:bg-[#6d28d9] transition-all active:scale-95">
-                  Enter Studio
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <section className="rounded-[24px] bg-white p-4 shadow-sm md:rounded-[30px] md:p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-[15px] font-semibold text-zinc-900 md:text-lg">Featured styles</h2>
+                <button
+                  type="button"
+                  onClick={() => navigate('/portfolio')}
+                  className="text-xs font-semibold text-[#7b53d3] transition hover:text-[#6a41c6]"
+                >
+                  See all
                 </button>
               </div>
-              <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-[#7c3aed] blur-[80px] opacity-30" />
-            </div>
 
-            <div>
-              <h2 className="font-black text-zinc-800 text-xl mb-6">Upcoming Jobs</h2>
-              <div className="space-y-3">
-                {upcomingAppointments.length > 0 ? (
-                  upcomingAppointments.map((apt) => (
-                    <div key={apt.id} className="bg-white p-4 rounded-[28px] border border-zinc-100 flex items-center gap-4 shadow-sm">
-                      <div className="w-12 h-12 rounded-2xl bg-zinc-50 overflow-hidden">
-                        <img
-                          src={
-                            apt.clientImage ||
-                            apt.customerImage ||
-                            `https://ui-avatars.com/api/?name=${encodeURIComponent(apt.clientName || apt.customerName || 'Client')}&background=f4f4f5&color=7c3aed`
-                          }
-                          alt="client"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <h4 className="font-bold text-zinc-800 text-sm">{apt.clientName || apt.customerName || 'Client'}</h4>
-                        <p className="text-[10px] text-zinc-400 font-bold flex items-center gap-1">
-                          <Calendar size={10} /> {apt.time}
+              {featuredStyles.length > 0 ? (
+                <div className="hide-scrollbar flex gap-3 overflow-x-auto pb-1 md:grid md:grid-cols-3 md:gap-3 lg:grid-cols-4">
+                  {featuredStyles.map((style) => (
+                    <button
+                      key={style.id}
+                      type="button"
+                      onClick={() => navigate('/portfolio')}
+                      className="group relative h-28 w-24 shrink-0 overflow-hidden rounded-[14px] bg-zinc-100 md:h-36 md:w-full md:rounded-[18px] lg:h-44"
+                    >
+                      <img
+                        src={style.image}
+                        alt={style.styleName || 'Featured style'}
+                        className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+                      />
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 py-2 text-left">
+                        <p className="truncate text-[10px] font-medium text-white md:text-[11px]">
+                          {style.styleName || 'Featured style'}
                         </p>
                       </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="bg-zinc-50 border-2 border-dashed border-zinc-100 rounded-[32px] p-10 text-center">
-                    <Inbox className="text-zinc-200 mx-auto mb-2" size={32} />
-                    <p className="text-zinc-400 text-[10px] font-bold uppercase tracking-widest">No jobs today</p>
-                  </div>
-                )}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-[18px] border border-dashed border-zinc-200 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-500">
+                  Your saved styles will appear here.
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-[24px] bg-white p-4 shadow-sm md:rounded-[30px] md:p-5 xl:sticky xl:top-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-[15px] font-semibold text-zinc-900 md:text-lg">Upcoming</h2>
+                <button
+                  type="button"
+                  onClick={() => navigate('/calendar')}
+                  className="text-xs font-semibold text-[#7b53d3] transition hover:text-[#6a41c6]"
+                >
+                  See all
+                </button>
               </div>
-            </div>
+
+              {activeUpcomingAppointments.length > 0 ? (
+                <div className="space-y-2.5 md:space-y-3">
+                  {activeUpcomingAppointments.slice(0, 7).map((appointment) => (
+                    <button
+                      key={appointment.id}
+                      type="button"
+                      onClick={() => navigate('/calendar')}
+                      className="flex w-full items-start justify-between gap-3 rounded-[14px] border border-zinc-200 bg-white px-3 py-2.5 text-left transition hover:border-[#d8caf8] hover:bg-[#fbf9ff] md:rounded-[16px] md:px-3.5 md:py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-zinc-900">
+                          {appointment.clientName ||
+                            appointment.customerName ||
+                            appointment.client ||
+                            appointment.clientEmail ||
+                            'Client'}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-zinc-500">{getDayLabel(appointment)}</p>
+                        <p className="text-[11px] text-zinc-500">{getPeriodLabel(appointment)}</p>
+                      </div>
+
+                      <span
+                        className={`shrink-0 pt-0.5 text-[11px] font-semibold ${getStatusClasses(
+                          appointment.status
+                        )}`}
+                      >
+                        {getStatusLabel(appointment.status)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-[18px] border border-dashed border-zinc-200 bg-zinc-50 px-4 py-8 text-center text-sm text-zinc-500">
+                  No upcoming appointments yet.
+                </div>
+              )}
+            </section>
           </div>
         </div>
       </div>
 
-      <AnimatePresence>
-        {isCommentsOpen && activePostForComments && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[120] bg-black/50 p-4 flex items-end md:items-center justify-center">
-            <motion.div initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="w-full max-w-2xl bg-white rounded-3xl border border-zinc-100 shadow-2xl overflow-hidden">
-              <div className="p-4 border-b border-zinc-100 flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] uppercase tracking-widest font-black text-zinc-400">Comments</p>
-                  <h3 className="font-black text-sm text-zinc-800 line-clamp-1">{activePostForComments.styleName || 'Shared Style'}</h3>
-                </div>
-                <button type="button" onClick={closeComments} className="p-2 rounded-full hover:bg-zinc-100">
-                  <X size={18} className="text-zinc-500" />
-                </button>
-              </div>
-
-              <div className="max-h-[50vh] overflow-y-auto p-4 space-y-4 bg-zinc-50">
-                {topComments.length === 0 ? (
-                  <div className="text-center py-10 text-zinc-400 font-bold text-sm">No comments yet. Start the conversation.</div>
-                ) : (
-                  topComments.map((comment) => (
-                    <div key={comment.id} className="space-y-2">
-                      <div className="bg-white rounded-2xl border border-zinc-100 p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs font-black text-zinc-800">{comment.userName || 'User'}</p>
-                          <p className="text-[10px] font-bold text-zinc-400">{formatRelativeTime(comment.createdAt)}</p>
-                        </div>
-                        <p className="mt-1 text-sm text-zinc-700 break-words">{comment.text}</p>
-                        <button
-                          type="button"
-                          onClick={() => setReplyTarget({ id: comment.id, name: comment.userName || 'User' })}
-                          className="mt-2 inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-[#7c3aed]"
-                        >
-                          <Reply size={12} /> Reply
-                        </button>
-                      </div>
-
-                      {(repliesByParent.get(comment.id) || []).map((reply) => (
-                        <div key={reply.id} className="ml-6 bg-white rounded-2xl border border-zinc-100 p-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-xs font-black text-zinc-800">{reply.userName || 'User'}</p>
-                            <p className="text-[10px] font-bold text-zinc-400">{formatRelativeTime(reply.createdAt)}</p>
-                          </div>
-                          <p className="mt-1 text-sm text-zinc-700 break-words">{reply.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <form onSubmit={handleSubmitComment} className="p-4 border-t border-zinc-100 bg-white">
-                {replyTarget && (
-                  <div className="mb-2 flex items-center justify-between rounded-xl bg-violet-50 px-3 py-2">
-                    <p className="text-[11px] font-bold text-violet-700">Replying to {replyTarget.name}</p>
-                    <button type="button" onClick={() => setReplyTarget(null)} className="text-[10px] uppercase font-black tracking-widest text-violet-700">
-                      Cancel
-                    </button>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 rounded-2xl border border-zinc-200 px-3 py-2">
-                  <input
-                    type="text"
-                    value={commentInput}
-                    onChange={(e) => setCommentInput(e.target.value)}
-                    placeholder={replyTarget ? `Reply to ${replyTarget.name}...` : 'Write a comment...'}
-                    className="flex-1 bg-transparent text-sm font-medium outline-none"
-                    maxLength={500}
-                  />
-                  <button
-                    type="submit"
-                    disabled={isSendingComment || !commentInput.trim()}
-                    className="inline-flex items-center gap-1 rounded-xl px-3 py-2 bg-[#7c3aed] text-white text-[11px] font-black uppercase tracking-widest disabled:opacity-60"
-                  >
-                    <Send size={12} />
-                    {isSendingComment ? 'Sending' : 'Send'}
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {toast.show && (
-        <div className="fixed top-4 right-4 z-[140]">
-          <div
-            className={`px-4 py-3 rounded-xl shadow-xl text-xs font-black uppercase tracking-wide text-white ${
-              toast.type === 'success'
-                ? 'bg-emerald-500'
-                : toast.type === 'error'
-                  ? 'bg-red-500'
-                  : toast.type === 'warning'
-                    ? 'bg-amber-500'
-                    : 'bg-zinc-800'
-            }`}
-          >
-            {toast.message}
-          </div>
-        </div>
-      )}
-
       <style>{`
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
     </div>
   );

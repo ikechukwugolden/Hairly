@@ -37,7 +37,7 @@ export const LandingHero = ({ onStart }) => {
           transition={{ duration: 0.8 }}
           className="space-y-6 md:space-y-8 max-w-xl relative z-20"
         >
-          <h1 className="text-5xl md:text-8xl font-black text-white tracking-tighter leading-none">
+          <h1 className="text-5xl md:text-6xl font-black text-white tracking-tighter leading-none">
             Welcome to <span className="text-[#cc5c89]">Hairly</span>
           </h1>
           
